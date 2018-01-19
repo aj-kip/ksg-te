@@ -1,0 +1,6 @@
+[submodule "util-common"]
+	path = util-common
+	url = https://github.com/aj-kip/util-common.git
+[submodule "ksg"]
+	path = ksg
+	url = https://github.com/aj-kip/ksg.git
