@@ -1,3 +1,24 @@
+/****************************************************************************
+
+    File: TextLines.cpp
+    Author: Andrew Janke
+    License: GPLv3
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+*****************************************************************************/
+
 #include "TextLines.hpp"
 
 #include <stdexcept>
@@ -196,6 +217,12 @@ Cursor TextLines::constrain_cursor(Cursor cursor) const noexcept {
 Cursor TextLines::end_cursor() const {
     if (m_text.empty()) return Cursor(0, 0);
     return Cursor(int(m_text.size() - 1), int(m_text.back().size()));
+}
+
+bool TextLines::is_valid_cursor(Cursor cursor) const noexcept {
+    if (cursor.line < 0 || cursor.column < 0) return false;
+    if (cursor.line >= int(m_text.size())) return false;
+    return cursor.column < int(m_text[std::size_t(cursor.line)].size());
 }
 
 /* private */ void TextLines::verify_cursor_validity

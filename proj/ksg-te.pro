@@ -3,7 +3,7 @@ CONFIG  -= c++11
 
 QMAKE_CXXFLAGS += -std=c++14
 QMAKE_LFLAGS   += -std=c++14
-LIBS           += -ltinyxml2 -lsfml-graphics -lsfml-window -lsfml-system -lz \
+LIBS           += -lsfml-graphics -lsfml-window -lsfml-system \
                   -L/usr/lib/x86_64-linux-gnu -L$$PWD/../ksg -L$$PWD/../util-common
 
 linux {
@@ -28,12 +28,14 @@ SOURCES += \
     ../src/main.cpp \
     ../src/TextLines.cpp \
     ../src/TextGrid.cpp \
-    ../src/TextRenderer.cpp
+    ../src/TextRenderer.cpp \
+    ../src/UserTextSelection.cpp
 
 HEADERS += \
     ../src/TextLines.hpp \
     ../src/TextGrid.hpp \
-    ../src/TextRenderer.hpp
+    ../src/TextRenderer.hpp \
+    ../src/UserTextSelection.hpp
 
 INCLUDEPATH += \
     ../ksg/inc      \

@@ -1,3 +1,24 @@
+/****************************************************************************
+
+    File: TextRenderer.cpp
+    Author: Andrew Janke
+    License: GPLv3
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+*****************************************************************************/
+
 #include "TextRenderer.hpp"
 #include "TextGrid.hpp"
 
@@ -59,6 +80,20 @@ class TextWriterDefs {
     private:
         void check_invarients() const;
     };
+    class NewLineTracker final : public GridWriter {
+    public:
+        static constexpr const int MAX_DIM = 80;
+        void write
+            (sf::Color, sf::Color, Cursor, const std::u32string &) override;
+        void write(sf::Color, sf::Color, Cursor, UChar c) override;
+        int width () const override { return MAX_DIM; }
+        int height() const override { return MAX_DIM; }
+        bool new_lines_are_ok() const;
+    private:
+        void ensure_resources_available();
+        std::vector<int > m_chars_per_line;
+        std::vector<bool> m_new_lines_covered;
+    };
     class FillTracker final : public GridWriter {
     public:
         static constexpr const int MAX_DIM = 80;
@@ -105,7 +140,11 @@ Cursor TextRendererPriv::GridWriter::end_cursor() const
 /* protected */ void TextRendererPriv::GridWriter::verify_cursor_validity
     (const char * funcname, Cursor cur) const
 {
-    if (cur.column < width() && cur.line < height()) return;
+    if (cur.column < width() && cur.line < height() &&
+        cur.column >= 0 && cur.line >= 0)
+    {
+        return;
+    }
     throw std::out_of_range(std::string(funcname) +
                             ": invalid cursor falls outside of grid.");
 }
@@ -131,125 +170,231 @@ void TextRenderer::render_lines_to
      const UserTextSelection & selection)
 {
     TextWriterDefs::TextGridWriter writer;
-    writer.parent_grid = text_grid;
+    writer.parent_grid    = text_grid;
     writer.write_position = starting_point;
     render_lines_to(writer, starting_point, tlines, selection);
 }
 
 /* private */ void TextRenderer::render_lines_to
-    (GridWriter & writer, Cursor tline_pos, const TextLines & tlines,
+    (GridWriter & writer, Cursor textlines_cursor, const TextLines & tlines,
      const UserTextSelection & selection)
 {
-    Cursor grid_pos(0, 0);
+    CursorPair cursors;
+    cursors.textlines = textlines_cursor;
+    cursors.grid = Cursor(0, 0);
+    const auto tlines_end_c = tlines.end_cursor();
+    auto height_c = writer.height();
     std::u32string buff;
-    const auto height = writer.height();
-    auto old_tlines_pos = tline_pos;
-    while (grid_pos.line <= height) {
-        if (tline_pos == tlines.end_cursor()) {
-            if (!buff.empty()) {
-                grid_pos = render_word_to(writer, grid_pos, buff);
-            }
-            fill_remainder_with_blanks(writer, grid_pos);
-            return;
-        }
-        auto uchr = tlines.read_character(tline_pos);
-        // test here is essentially: at point of word breaking
-        if (is_whitespace(uchr)) {
-            if (!buff.empty()) {
-                grid_pos = render_word_to(writer, grid_pos, buff);
-            }
+    while (cursors.textlines != tlines_end_c && cursors.grid.line != height_c) {
+        auto uchr = tlines.read_character(cursors.textlines);
+        switch (uchr) {
+        case U' ':
+            cursors.in_text_lines = true;
+            cursors.grid = render_word_to(writer, cursors, buff, selection, tlines);
+            cursors.grid = print_space(writer, cursors, selection);
             buff.clear();
-            auto fore = m_info.default_fore;
-            auto back = m_info.default_back;
-            if (selection.is_in_range(tline_pos)) {
-                fore = invert(fore);
-                back = invert(back);
-            }
-            writer.write(fore, back, grid_pos, uchr);
-            if (uchr == TextLines::NEW_LINE) {
-                auto old_line = grid_pos.line;
-                while (old_line == grid_pos.line) {
-                    writer.write(m_info.default_fore, m_info.default_back, grid_pos, U' ');
-                    grid_pos = writer.next_cursor(grid_pos);
-                }
-            } else {
-                grid_pos = writer.next_cursor(grid_pos);
-            }
-        } else {
+            break;
+        case U'\t':
+            cursors.in_text_lines = true;
+            cursors.grid = render_word_to(writer, cursors, buff, selection, tlines);
+            for (int i = 0; i != DEFAULT_TAB_WIDTH; ++i)
+                cursors.grid = print_space(writer, cursors, selection);
+            buff.clear();
+            break;
+        case TextLines::NEW_LINE:
+            cursors.in_text_lines = true;
+            cursors.grid = render_word_to(writer, cursors, buff, selection, tlines);
+            cursors.in_text_lines = false;
+            cursors.grid = fill_remainder_line_with_blanks(writer, cursors);
+            buff.clear();
+            break;
+        default:
             buff += uchr;
-        }
-        tline_pos = tlines.next_cursor(tline_pos);
-        assert(tline_pos != old_tlines_pos);
-        old_tlines_pos = tline_pos;
+            break;
+        };
+        cursors.textlines = tlines.next_cursor(cursors.textlines);
+    }
+    if (cursors.grid.line != height_c) {
+        cursors.grid = render_word_to(writer, cursors, buff, selection, tlines);
+        fill_remainder_with_blanks(writer, cursors.grid);
     }
 }
 
 /* private */ Cursor TextRenderer::render_word_to
-    (GridWriter & writer, Cursor grid_pos, const std::u32string & buff,
-     const UserTextSelection &)
+    (GridWriter & writer, const CursorPair & cursors,
+     const std::u32string & buff, const UserTextSelection & selection,
+     const TextLines & tlines)
 {
-    const auto width  = writer.width ();
-    const auto height = writer.height();
-    auto fore_color = m_info.default_fore;
-    auto grid_pos_is_valid = [&grid_pos, &writer] () {
-        return grid_pos.line <= writer.height() &&
-               grid_pos.column < writer.width();
-    };
-    if (m_info.keywords.find(buff) != m_info.keywords.end())
-        fore_color = m_info.keyword_fore;
-    assert(grid_pos_is_valid());
+    if (buff.empty()) return cursors.grid;
+    const auto width = writer.width();
+    assert(cursors.grid.line <= writer.height() &&
+           cursors.grid.column < writer.width());
     if (int(buff.size()) >= width) {
-        // hard wrap
-        // not enough space for an entire grid line
-        std::u32string temp;
-        auto itr = buff.begin();
-        while (buff.end() - itr >= width) {
-            temp.insert(temp.begin(), itr, itr + width);
-            writer.write(fore_color, m_info.default_back, grid_pos, temp);
-            temp.clear();
-            ++grid_pos.line;
-            if (grid_pos.line == height) {
-                assert(grid_pos_is_valid());
-                return grid_pos;
-            }
-            grid_pos.column = 0;
-            itr += width;
-        }
-        // write the rest
-        temp.insert(temp.begin(), itr, buff.end());
-        writer.write(fore_color, m_info.default_back, grid_pos, temp);
-        grid_pos.column += (buff.end() - itr);
-    } else if (grid_pos.column + int(buff.size()) >= width) {
-        // soft wrap
-        // fill line with blanks, procede and write to next line
-        // unless out of space
-        while (grid_pos.column != width) {
-            writer.write(m_info.default_fore, m_info.default_back, grid_pos, U' ');
-            ++grid_pos.column;
-        }
-        ++grid_pos.line;
-        if (grid_pos.line == height) {
-            assert(grid_pos_is_valid());
-            return grid_pos;
-        }
-        grid_pos.column = 0;
-        writer.write(fore_color, m_info.default_back, grid_pos, buff);
-        grid_pos.column = int(buff.size());
+        return render_word_hard_wrap(writer, cursors, buff, selection, tlines);
+    } else if (cursors.grid.column + int(buff.size()) >= width) {
+        return render_word_soft_wrap(writer, cursors, buff, selection, tlines);
     } else {
-        // normal write
-        writer.write(fore_color, m_info.default_back, grid_pos, buff);
-        grid_pos.column += int(buff.size());
+        return render_word_no_wrap(writer, cursors, buff, selection, tlines);
     }
-    assert(grid_pos_is_valid());
+}
+
+/* private */ Cursor TextRenderer::render_word_hard_wrap
+    (GridWriter & writer, const CursorPair & cursors,
+     const std::u32string & buff, const UserTextSelection & selection,
+     const TextLines & tlines)
+{
+    // hard wrap
+    // not enough space for an entire grid line
+    using HighlightBool = UserTextSelection::StringSelectionIters::HighlightBool;
+    using CIter         = std::u32string::const_iterator;
+
+    auto is_keyword   = m_info.keywords.find(buff) != m_info.keywords.end();
+    auto grid_pos     = cursors.grid;
+    const auto fore_c = is_keyword ? m_info.keyword_fore : m_info.default_fore;
+    const auto back_c = m_info.default_back;
+    // is not the start of "buff"
+    auto tline_cursor = cursors.textlines;
+    tline_cursor.column -= int(buff.size());
+    // must be same text line
+    assert(tlines.is_valid_cursor(tline_cursor));
+    std::u32string temp;
+    auto selobj = selection.ranges_for_string(tline_cursor, buff, tlines);
+    selobj.for_each_iterator_pair([&](CIter beg, CIter end, HighlightBool h) {
+        if (grid_pos.line == writer.height()) return;
+        auto fore = fore_c, back = back_c;
+        if (h == HighlightBool::HIGHLIGHT) {
+            fore = invert(fore);
+            back = invert(back);
+        }
+        // write as many as possible, then move on to next text grid line
+        int available = writer.width() - grid_pos.column;
+        for (auto itr = beg; itr != end;) {
+            if (available < end - itr) {
+                temp = std::u32string(itr, itr + available);
+                writer.write(fore, back, grid_pos, temp);
+                writer.write(fore, back,
+                             Cursor(grid_pos.line, writer.width() - 1),
+                             TextLines::NEW_LINE);
+                grid_pos.column = 0;
+                ++grid_pos.line;
+                available = writer.width();
+                if (grid_pos.line == writer.height())
+                    return; // we must finish, no room left...
+                itr += available;
+            } else {
+                temp = std::u32string(itr, end);
+                writer.write(fore, back, grid_pos, temp);
+                grid_pos.column += int(temp.size());
+                break;
+            }
+        }
+    });
     return grid_pos;
 }
 
-void TextRenderer::fill_remainder_with_blanks
+/* private */ Cursor TextRenderer::render_word_soft_wrap
+    (GridWriter & writer, const CursorPair & cursors,
+     const std::u32string & buff, const UserTextSelection & selection,
+     const TextLines & tlines)
+{
+    // soft wrap
+    // fill line with blanks, procede and write to next line
+    // unless out of space
+    assert(cursors.grid.column + int(buff.size()) >= writer.width());
+    Cursor grid_pos = fill_remainder_line_with_blanks(writer, cursors);
+    if (grid_pos.line == writer.height()) return grid_pos;
+    CursorPair new_cursor_pair = cursors;
+    new_cursor_pair.grid = grid_pos;
+    return render_word_no_wrap(writer, new_cursor_pair, buff, selection, tlines);
+}
+
+/* private */ Cursor TextRenderer::render_word_no_wrap
+    (GridWriter & writer, const CursorPair & cursors,
+     const std::u32string & buff, const UserTextSelection & selection,
+     const TextLines & tlines)
+{
+    using HighlightBool = UserTextSelection::StringSelectionIters::HighlightBool;
+    using CIter         = std::u32string::const_iterator;
+
+    auto is_keyword = m_info.keywords.find(buff) != m_info.keywords.end();
+    const auto fore_c = is_keyword ? m_info.keyword_fore : m_info.default_fore;
+    const auto back_c = m_info.default_back;
+    auto tline_pos = cursors.textlines;
+    tline_pos.column -= int(buff.size());
+    assert(tlines.is_valid_cursor(tline_pos));
+    auto sel_obj = selection.ranges_for_string(tline_pos, buff, tlines);
+    auto grid_pos = cursors.grid;
+    std::u32string temp;
+    // guarantee: whole word will fit on line from current grid position
+    // I capture everything because I'm naughty <:3
+    // (Rationale, too much complexity/maintanence required to state the entire
+    //  list explicitly)
+    sel_obj.for_each_iterator_pair([&](CIter beg, CIter end, HighlightBool h) {
+        auto fore = fore_c;
+        auto back = back_c;
+        if (h == HighlightBool::HIGHLIGHT) {
+            fore = invert(fore);
+            back = invert(back);
+        }
+        temp = std::u32string(beg, end);
+        writer.write(fore, back, grid_pos, temp);
+        grid_pos.column += (end - beg);
+    });
+    return grid_pos;
+}
+
+/* private */ Cursor TextRenderer::print_space
+    (GridWriter & writer, const CursorPair & cursors,
+     const UserTextSelection & selection) const
+{
+    auto fore = m_info.default_fore;
+    auto back = m_info.default_back;
+    if (selection.is_in_range(cursors.textlines)) {
+        fore = invert(fore);
+        back = invert(back);
+    }
+    writer.write(fore, back, cursors.grid, U' ');
+    return writer.next_cursor(cursors.grid);
+}
+
+/* private */ Cursor TextRenderer::fill_remainder_line_with_blanks
+    (GridWriter & writer, const CursorPair & cursors) const
+{
+    auto old_line = cursors.grid.line;
+    auto new_grid_pos = cursors.grid;
+    const auto width_c = writer.width();
+    assert(old_line != writer.height());
+    while (width_c != new_grid_pos.column) {
+        writer.write(m_info.default_fore, m_info.default_back,
+                     new_grid_pos, U' ');
+        ++new_grid_pos.column;
+    }
+    writer.write(m_info.default_fore, m_info.default_back,
+                 Cursor(new_grid_pos.line, new_grid_pos.column - 1),
+                 TextLines::NEW_LINE);
+    new_grid_pos.column = 0;
+    ++new_grid_pos.line;
+    return new_grid_pos;
+}
+
+/* private */ void TextRenderer::fill_remainder_with_blanks
     (GridWriter & writer, Cursor grid_pos)
 {
-    while (grid_pos != writer.end_cursor()) {
+    auto prev_cursor = [&writer](Cursor cursor) {
+        if (--cursor.column < 0) {
+            --cursor.line;
+            cursor.column = writer.width() - 1;
+        }
+        return cursor;
+    };
+    Cursor grid_end = writer.end_cursor();
+    while (grid_pos != grid_end) {
         writer.write(m_info.default_fore, m_info.default_back, grid_pos, U' ');
         grid_pos = writer.next_cursor(grid_pos);
+        if (grid_pos.column == 0) {
+            writer.write(m_info.default_fore, m_info.default_back,
+                         prev_cursor(grid_pos), TextLines::NEW_LINE);
+        }
     }
 }
 
@@ -357,7 +502,32 @@ void TextRenderer::add_keyword(const std::u32string & keyword) {
     assert(writer.filled());
     }
     // 8. handle tab characters
+    {
+    static_assert(TextRenderer::DEFAULT_TAB_WIDTH == 4,
+                  "This test case needs to be changed.");
+    TextLines tlines;
+    push_string_to(U"\tapple\n"
+                    "\tbanana\n"
+                    "orange", &tlines);
+    TextRenderer txtrndr;
+    TestWriter::MultiLine writer;
+    txtrndr.setup_defaults();
+    txtrndr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(first_part_match(U"    apple" , writer.lines[0]));
+    assert(first_part_match(U"    banana", writer.lines[1]));
+    assert(first_part_match(U"orange", writer.lines[2]));
+    }
     // 9. handle cursor mapping
+    // still no idea on how exactly I want to implement this...
+    // 10. all newlines must be handled properly
+    {
+    TextLines tlines;
+    TextRenderer txtrndr;
+    TestWriter::NewLineTracker writer;
+    txtrndr.setup_defaults();
+    txtrndr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(writer.new_lines_are_ok());
+    }
 }
 
 /* static */ bool TextRenderer::is_whitespace(UChar c) {
@@ -368,6 +538,13 @@ void TextRenderer::add_keyword(const std::u32string & keyword) {
     return sf::Color(255 - color.r, 255 - color.g, 255 - color.b, color.a);
 }
 
+// ----------------------------------------------------------------------------
+
+/* private */ void UserTextSelection::StringSelectionIters::
+    check_invarients() const
+{
+    assert(iterators_are_good());
+}
 
 // ----------------------------------------------------------------------------
 
@@ -404,6 +581,7 @@ void TextWriterDefs::TextGridWriter::write
 {
     verify_cursor_validity("HighlighterWriterDefs::TextGridWriter::write", cur);
     verify_parent_present("HighlighterWriterDefs::TextGridWriter::write");
+    if (uc == TextLines::NEW_LINE) return;
     parent_grid->set_cell(cur, fore, back, uc);
 }
 
@@ -451,14 +629,6 @@ void TextWriterDefs::MultiLine::write
     check_invarients();
     verify_cursor_validity("HighlighterWriterDefs::MultiLine::write", cursor);
     adjust_size_for(cursor);
-    std::string temp;
-    for (auto uchr : buff) {
-        if (TextLines::is_ascii(uchr))
-            temp += char(uchr & 0x7F);
-        else
-            temp += '?';
-    }
-
     last_cursor_of_string_write = cursor;
     *(lines.begin() + cursor.line) += buff;
     check_invarients();
@@ -488,6 +658,52 @@ void TextWriterDefs::MultiLine::adjust_size_for(Cursor cur) {
     for (const auto & line : lines) {
         assert(line.size() <= LINE_MAX);
     }
+}
+
+// ----------------------------------------------------------------------------
+
+void TextWriterDefs::NewLineTracker::write
+    (sf::Color, sf::Color, Cursor cursor, const std::u32string & buff)
+{
+    verify_cursor_validity("TextWriterDefs::NewLineTracker::write", cursor);
+    ensure_resources_available();
+    assert(cursor.column >= m_chars_per_line.back());
+    m_chars_per_line.back() += int(buff.size());
+}
+
+void TextWriterDefs::NewLineTracker::write
+    (sf::Color, sf::Color, Cursor cursor, UChar c)
+{
+    verify_cursor_validity("TextWriterDefs::NewLineTracker::write", cursor);
+    ensure_resources_available();
+    if (c == TextLines::NEW_LINE) {
+        assert(cursor.column == width() - 1 &&
+               cursor.line   == int(m_chars_per_line.size()) - 1);
+        m_new_lines_covered[std::size_t(cursor.line)] = true;
+        if (int(m_chars_per_line.size()) == height())
+            return;
+        m_chars_per_line.push_back(0);
+    } else {
+        ++m_chars_per_line.back();
+    }
+}
+
+bool TextWriterDefs::NewLineTracker::new_lines_are_ok() const {
+    for (int char_count : m_chars_per_line) {
+        if (char_count != width())
+            return false;
+    }
+    for (bool b : m_new_lines_covered) {
+        if (!b) return false;
+    }
+    return true;
+}
+
+/* private */ void TextWriterDefs::NewLineTracker::ensure_resources_available() {
+    if (m_chars_per_line.empty())
+        m_chars_per_line.push_back(0);
+    if (m_new_lines_covered.empty())
+        m_new_lines_covered.resize(std::size_t(height()), false);
 }
 
 // ----------------------------------------------------------------------------

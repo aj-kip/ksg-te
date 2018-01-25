@@ -1,3 +1,24 @@
+/****************************************************************************
+
+    File: TextRenderer.hpp
+    Author: Andrew Janke
+    License: GPLv3
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+*****************************************************************************/
+
 #pragma once
 
 #include <SFML/Graphics/Color.hpp>
@@ -5,6 +26,7 @@
 #include <set>
 
 #include "TextLines.hpp"
+#include "UserTextSelection.hpp"
 
 class TextGrid;
 
@@ -15,6 +37,14 @@ class TextRendererPriv {
     friend class TextRenderer;
     friend class TextWriterDefs;
     // maps text line cursors to text grid cursors
+    /**
+    *  Behavior guarentees for GridWriter:
+    *  - For newlines, the single char write function will always be called.
+    *  - - cursors for the new line must correspond to the old line
+    *  - There is always enough room in the current line to write the entire
+    *    string
+    *  @param starting_point
+    */
     class GridWriter {
     public:
         virtual ~GridWriter();
@@ -29,35 +59,6 @@ class TextRendererPriv {
     };
 };
 
-class UserTextSelection {
-public:
-    UserTextSelection(): m_alt_held(false) {}
-
-    // events to move primary
-    void move_left(const TextLines &);
-    void move_right(const TextLines &);
-    void move_down(const TextLines &);
-    void move_up(const TextLines &);
-    void page_down(const TextLines &, int page_size);
-    void page_up(const TextLines &, int page_size);
-
-    // events controlling alt
-    void hold_alt_cursor   () { m_alt_held = true ; }
-    void release_alt_cursor() { m_alt_held = false; }
-
-    bool is_in_range(Cursor) const;
-
-    Cursor begin() const;
-    Cursor end() const;
-private:
-    void constrain_primary_update_alt(const TextLines &);
-    bool primary_is_ahead() const;
-
-    bool m_alt_held;
-    Cursor m_primary;
-    Cursor m_alt;
-};
-
 /** Highlighting without scope, simple keyword -> highlight + default colors
  *
  */
@@ -69,6 +70,7 @@ public:
     static const sf::Color default_back_c;
     static const sf::Color default_select_fore_c;
     static const sf::Color default_select_back_c;
+    static constexpr const int DEFAULT_TAB_WIDTH = 4;
     TextRenderer();
     void setup_defaults();
     // I've neglected some important details
@@ -79,16 +81,19 @@ public:
     void render_lines_to
         (TextGrid *, Cursor starting_point, const TextLines &,
          const UserTextSelection &);
+
+
     void add_keyword(const std::u32string &);
 
     static void run_tests();
     static bool is_whitespace(UChar);
     static sf::Color invert(sf::Color);
 private:
-    using KeywordMap = std::set<std::u32string>;
-    struct HighlightInfo;
     // allows for unit tests
     using GridWriter = TextRendererPriv::GridWriter;
+    using KeywordMap = std::set<std::u32string>;
+    struct HighlightInfo;
+
 
     struct HighlightInfo {
         KeywordMap keywords;
@@ -99,86 +104,39 @@ private:
         sf::Color select_back;
     };
 
-    /**
-     *  Behavior guarentees for GridWriter:
-     *  - For newlines, the single char write function will always be called.
-     *  - There is always enough room in the current line to write the entire
-     *    string
-     *  @param starting_point
-     */
+    struct CursorPair {
+        CursorPair(): in_text_lines(true) {}
+        Cursor textlines;
+        Cursor grid;
+        bool in_text_lines;
+    };
+
     void render_lines_to
         (GridWriter &, Cursor starting_point, const TextLines &,
-         const UserTextSelection & = UserTextSelection());
+         const UserTextSelection & selection = UserTextSelection());
 
     Cursor render_word_to
-        (GridWriter &, Cursor grid_pos, const std::u32string &,
-         const UserTextSelection & = UserTextSelection());
+        (GridWriter &, const CursorPair &, const std::u32string &,
+         const UserTextSelection & selection, const TextLines &);
+
+    Cursor render_word_hard_wrap
+        (GridWriter &, const CursorPair &, const std::u32string &,
+         const UserTextSelection & selection, const TextLines &);
+
+    Cursor render_word_soft_wrap
+        (GridWriter &, const CursorPair &, const std::u32string &,
+         const UserTextSelection & selection, const TextLines &);
+
+    Cursor render_word_no_wrap
+        (GridWriter &, const CursorPair &, const std::u32string &,
+         const UserTextSelection & selection, const TextLines &);
+
+    Cursor print_space(GridWriter & writer, const CursorPair & cursors,
+                       const UserTextSelection & selection) const;
+
+    Cursor fill_remainder_line_with_blanks
+        (GridWriter & writer, const CursorPair & cursors) const;
 
     void fill_remainder_with_blanks(GridWriter &, Cursor grid_pos);
     HighlightInfo m_info;
 };
-
-inline void UserTextSelection::move_left(const TextLines & tlines) {
-    if (m_primary == tlines.end_cursor()) return;
-    m_primary = tlines.next_cursor(m_primary);
-    if (!m_alt_held)
-        m_alt = m_primary;
-}
-
-inline void UserTextSelection::move_right(const TextLines & tlines) {
-    if (m_primary == Cursor()) return;
-    m_primary = tlines.previous_cursor(m_primary);
-    if (!m_alt_held)
-        m_alt = m_primary;
-}
-
-inline void UserTextSelection::move_down(const TextLines & tlines) {
-    ++m_primary.line;
-    constrain_primary_update_alt(tlines);
-}
-
-inline void UserTextSelection::move_up(const TextLines & tlines) {
-    --m_primary.line;
-    constrain_primary_update_alt(tlines);
-}
-
-inline void UserTextSelection::page_down
-    (const TextLines & tlines, int page_size)
-{
-    m_primary.line += page_size;
-    constrain_primary_update_alt(tlines);
-}
-
-inline void UserTextSelection::page_up
-    (const TextLines & tlines, int page_size)
-{
-    m_primary.line -= page_size;
-    constrain_primary_update_alt(tlines);
-}
-
-inline bool UserTextSelection::is_in_range(Cursor cursor) const {
-    auto end_ = end(), beg = begin();
-    return cursor.line >= beg.line    && cursor.column >= beg.column &&
-           cursor.line <  end_.column && cursor.column <  end_.column;
-}
-
-inline Cursor UserTextSelection::begin() const {
-    return primary_is_ahead() ? m_alt : m_primary;
-}
-
-inline Cursor UserTextSelection::end() const {
-    return primary_is_ahead() ? m_primary : m_alt;
-}
-
-/* private */ inline void UserTextSelection::constrain_primary_update_alt
-    (const TextLines & tlines)
-{
-    m_primary = tlines.constrain_cursor(m_primary);
-    if (!m_alt_held)
-        m_alt = m_primary;
-}
-
-/* private */ inline bool UserTextSelection::primary_is_ahead() const {
-    if (m_primary.line > m_alt.line) return true;
-    return m_primary.column > m_alt.column;
-}
