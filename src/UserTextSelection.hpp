@@ -23,7 +23,9 @@
 
 #include <string>
 
-#include "TextLines.hpp"
+#include "Cursor.hpp"
+
+class TextLines;
 
 class UserTextSelection {
 public:
@@ -46,6 +48,7 @@ public:
     };
     // Cursors always in context of textlines (NOT the text grid)
     UserTextSelection(): m_alt_held(false) {}
+    UserTextSelection(Cursor starting_position);
 
     // events to move primary
     void move_left(const TextLines &);
@@ -58,8 +61,9 @@ public:
     // events controlling alt
     void hold_alt_cursor   () { m_alt_held = true ; }
     void release_alt_cursor() { m_alt_held = false; }
+    bool alt_is_held() const  { return m_alt_held; }
 
-    bool is_in_range(Cursor) const;
+    bool contains(Cursor) const;
     // assumption: string occupies a single line in TextLines
     StringSelectionIters ranges_for_string
         (Cursor, const std::u32string &, const TextLines &) const;
@@ -69,6 +73,8 @@ public:
 
     bool operator == (const UserTextSelection &) const;
     bool operator != (const UserTextSelection &) const;
+
+    static void run_tests();
 private:
     void constrain_primary_update_alt(const TextLines &);
     bool primary_is_ahead() const;

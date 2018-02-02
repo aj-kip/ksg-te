@@ -1,4 +1,4 @@
-/****************************************************************************
+﻿/****************************************************************************
 
     File: main.cpp
     Author: Andrew Janke
@@ -31,7 +31,6 @@
 #include <cassert>
 
 #include "TextLines.hpp"
-#include "TextRenderer.hpp"
 #include "TextGrid.hpp"
 #include "UserTextSelection.hpp"
 
@@ -47,17 +46,20 @@ public:
     void do_update(float et);
 private:
     TextLines m_lines;
-    TextRenderer m_highligher;
+
     TextGrid m_grid;
     float m_delay;
     Cursor m_cursor;
     UserTextSelection m_user_selection;
+    RenderOptions m_render_options;
 };
 
 int main() {
 #   ifndef NDEBUG
-    TextLines::run_test();
-    TextRenderer::run_tests();
+    TextLine::run_tests();
+    TextLines::run_tests();
+    UserTextSelection::run_tests();
+
 #   endif
     EditorDialog editor;
     sf::Font font;
@@ -113,19 +115,24 @@ void EditorDialog::setup_dialog(const sf::Font & font) {
          "    local c = pull(a)\n"
          "    c[1] = c[1] + a*b\n"
          "    return c\n"
-         "end";
+         "end\n"
+         "This is a very long line which contains over eighty characters, which is made evident by this very verbose sentence.";
     Cursor cursor;
     for (auto uchr : sample_code)
         cursor = m_lines.push(cursor, uchr);
     m_grid.set_size_in_characters(80, 30);
-    m_highligher.add_keyword(U"function");
-    m_highligher.add_keyword(U"local");
-    m_highligher.add_keyword(U"return");
-    m_highligher.add_keyword(U"end");
-    m_highligher.setup_defaults();
+    m_render_options.add_keyword(U"function");
+    m_render_options.add_keyword(U"local");
+    m_render_options.add_keyword(U"return");
+    m_render_options.add_keyword(U"end");
+    m_lines.constrain_to_width(m_grid.width_in_cells());
+    m_lines.assign_render_options(m_render_options);
 
-    m_highligher.render_lines_to(&m_grid, Cursor(0, 0), m_lines, m_user_selection);
     m_grid.assign_font(font);
+    m_render_options.set_text_selection(m_user_selection);
+
+    m_lines.render_to(m_grid.as_target_interface(), 0);
+
     add_widget(&m_grid);
     set_style(styles);
     update_geometry();
@@ -136,18 +143,17 @@ void EditorDialog::process_event(const sf::Event & event) {
     auto old_selection = m_user_selection;
     handle_event(&m_user_selection, m_lines, event);
     if (old_selection != m_user_selection) {
-        m_highligher.render_lines_to(&m_grid, Cursor(0, 0), m_lines, m_user_selection);
+        m_render_options.set_text_selection(m_user_selection);
+        m_lines.render_to(m_grid.as_target_interface(), 0);
     }
 }
 
 void EditorDialog::do_update(float et) {
     m_delay += et;
-    if (m_delay > 0.5f) {
+    if (m_delay > 0.3f) {
         m_delay = 0.f;
-        auto invert = TextRenderer::invert;
-        m_grid.set_cell_colors(m_cursor,
-            invert(m_grid.cell_fore_color(m_cursor)),
-            invert(m_grid.cell_back_color(m_cursor)));
+        m_render_options.toggle_cursor_flash();
+        m_lines.render_to(m_grid.as_target_interface(), 0);
     }
 }
 

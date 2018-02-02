@@ -34,6 +34,16 @@
 
 class TextGrid final : public ksg::Widget {
 public:
+    struct TargetInterface final : public TargetTextGrid {
+        TargetInterface(TextGrid & parent): parent_grid(&parent) {}
+        TargetInterface(const TargetInterface &) = default;
+        ~TargetInterface() override;
+        int width () const override { return parent_grid->width_in_cells(); }
+        int height() const override { return parent_grid->height_in_cells(); }
+        void set_cell(Cursor cursor, UChar uchr, ColorPair cpair) override
+            { parent_grid->set_cell(cursor, cpair.fore, cpair.back, uchr); }
+        TextGrid * parent_grid;
+    };
     using StyleMap = ksg::StyleMap;
 
     static constexpr const char * const FONT = "text-grid-font";
@@ -79,6 +89,9 @@ public:
 
     Cursor end_cursor() const;
     Cursor next_cursor(Cursor) const;
+
+    TargetInterface as_target_interface()
+        { return TargetInterface(*this); }
 
 private:
     using DrawCharacter = ksg::without_advance::DrawCharacter;

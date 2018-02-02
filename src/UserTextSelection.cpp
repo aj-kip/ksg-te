@@ -20,19 +20,28 @@
 *****************************************************************************/
 
 #include "UserTextSelection.hpp"
+#include "TextLines.hpp"
 
 #include <stdexcept>
 
+#include <cassert>
+
+UserTextSelection::UserTextSelection(Cursor starting_position):
+    m_alt_held(false            ),
+    m_primary (starting_position),
+    m_alt     (starting_position)
+{}
+
 void UserTextSelection::move_left(const TextLines & tlines) {
-    if (m_primary == tlines.end_cursor()) return;
-    m_primary = tlines.constrain_cursor(tlines.next_cursor(m_primary));
+    if (m_primary == Cursor()) return;
+    m_primary = tlines.constrain_cursor(tlines.previous_cursor(m_primary));
     if (!m_alt_held)
         m_alt = m_primary;
 }
 
 void UserTextSelection::move_right(const TextLines & tlines) {
-    if (m_primary == Cursor()) return;
-    m_primary = tlines.constrain_cursor(tlines.previous_cursor(m_primary));
+    if (m_primary == tlines.end_cursor()) return;
+    m_primary = tlines.constrain_cursor(tlines.next_cursor(m_primary));
     if (!m_alt_held)
         m_alt = m_primary;
 }
@@ -63,7 +72,7 @@ void UserTextSelection::page_up
     constrain_primary_update_alt(tlines);
 }
 
-bool UserTextSelection::is_in_range(Cursor cursor) const {
+bool UserTextSelection::contains(Cursor cursor) const {
     auto end_ = end(), beg = begin();
     return cursor.line >= beg.line    && cursor.column >= beg.column &&
            cursor.line <  end_.column && cursor.column <  end_.column;
@@ -105,6 +114,95 @@ bool UserTextSelection::operator == (const UserTextSelection & rhs) const
 
 bool UserTextSelection::operator != (const UserTextSelection & rhs) const
     { return !equal(rhs); }
+
+/* static */ void UserTextSelection::run_tests() {
+    const TextLines test_tlines_c = TextLines(
+        U"sample text\n"
+         "second line with five words\n"
+         "and then finally the third line\n"
+         "shortest");
+    // 1. move right
+    {
+    UserTextSelection uts(Cursor(0, 3));
+    for (int i = 0; i != 3; ++i)
+        uts.move_right(test_tlines_c);
+    assert(uts.begin() == uts.end());
+    assert(uts.begin() == Cursor(0, 6));
+    }
+    // 2. move left
+    {
+    UserTextSelection uts(Cursor(1, 7));
+    for (int i = 0; i != 3; ++i)
+        uts.move_left(test_tlines_c);
+    assert(uts.begin() == uts.end());
+    assert(uts.begin() == Cursor(1, 4));
+    }
+    // 3. move up
+    {
+    UserTextSelection uts(Cursor(1, 5));
+    uts.move_up(test_tlines_c);
+    assert(uts.begin() == uts.end());
+    assert(uts.begin() == Cursor(0, 5));
+    }
+    // 4. move down
+    {
+    UserTextSelection uts(Cursor(1, 5));
+    uts.move_down(test_tlines_c);
+    assert(uts.begin() == Cursor(2, 5));
+    }
+    // 5. move left -> previous line
+    {
+    UserTextSelection uts(Cursor(1, 3));
+    for (int i = 0; i != 4; ++i)
+        uts.move_left(test_tlines_c);
+    assert(uts.begin() == Cursor(0, 11));
+    }
+    // 6. move right -> next line
+    {
+    UserTextSelection uts(Cursor(0, 7));
+    for (int i = 0; i != 5; ++i)
+       uts.move_right(test_tlines_c);
+    assert(uts.begin() == Cursor(1, 0));
+    }
+    // 7. move up -> constrain
+    {
+    UserTextSelection uts(Cursor(1, 16));
+    assert(test_tlines_c.is_valid_cursor(uts.begin()));
+    uts.move_up(test_tlines_c);
+    assert(uts.begin() == Cursor(0, 11));
+    }
+    // 8. move down -> constrain
+    {
+    UserTextSelection uts(Cursor(2, 15));
+    assert(test_tlines_c.is_valid_cursor(uts.begin()));
+    uts.move_down(test_tlines_c);
+    assert(uts.begin() == Cursor(3, 8));
+    }
+    // 9. hold alt -> move right
+    {
+    UserTextSelection uts(Cursor(0, 3));
+    uts.hold_alt_cursor();
+    uts.move_right(test_tlines_c);
+    assert(uts.begin() == Cursor(0, 3) && uts.end() == Cursor(0, 4));
+    }
+    // 10. hold alt -> move left
+    {
+    UserTextSelection uts(Cursor(0, 9));
+    uts.hold_alt_cursor();
+    uts.move_left(test_tlines_c);
+    assert(uts.begin() == Cursor(0, 8) && uts.end() == Cursor(0, 9));
+    }
+    // 11. hold alt + move right -> next line
+    {
+    UserTextSelection uts(Cursor(0, 9));
+    uts.hold_alt_cursor();
+    for (int i = 0; i != 4; ++i)
+        uts.move_right(test_tlines_c);
+    assert(uts.end  () == Cursor(1, 1));
+    assert(uts.begin() == Cursor(0, 9));
+    }
+    // 12. hold alt + move left -> previous line
+}
 
 /* private */ void UserTextSelection::constrain_primary_update_alt
     (const TextLines & tlines)

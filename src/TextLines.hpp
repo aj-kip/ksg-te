@@ -21,34 +21,33 @@
 
 #include <vector>
 #include <string>
+#include <stdexcept>
+
+#include "Cursor.hpp"
+#include "TargetTextGrid.hpp"
 
 #pragma once
 
-using UChar = char32_t;
-
-struct Cursor {
-    Cursor(): line(0), column(0) {}
-
-    Cursor(int line_, int column_): line(line_), column(column_) {}
-
-    bool operator == (const Cursor & lhs) const
-        { return line == lhs.line && column == lhs.column; }
-
-    bool operator != (const Cursor & lhs) const
-        { return line != lhs.line || column != lhs.column; }
-
-    int line;
-    int column;
-};
-
+class TextLine;
 class TextLines {
 public:
-    using ConstUCharIter = std::vector<UChar>::const_iterator;
-
     static constexpr const UChar NEW_LINE = U'\n';
+    using UStringCIter = std::u32string::const_iterator;
 
-    static bool is_ascii(UChar u) { return (u & 0x7F) == u; }
-    static void run_test();
+    TextLines();
+    explicit TextLines(const std::u32string &);
+
+    // ------------------------ whole content editing -------------------------
+
+    void constrain_to_width(int);
+    void set_content(const std::u32string &);
+    /** @warning Does not in anyway maintain ownership over the given object
+     *           reference. Given object must survive the life of this object.
+     */
+    void assign_render_options(const RenderOptions &);
+    void assign_default_render_options();
+
+    // ----------------------- single character editing -----------------------
 
     Cursor push(Cursor, UChar);
     // user presses "del"
@@ -56,49 +55,122 @@ public:
     // user presses "backspace"
     Cursor delete_behind(Cursor);
     Cursor wipe(Cursor beg, Cursor end);
-    std::u32string withdraw_characters_from(Cursor beg, Cursor end) const;
+    std::u32string copy_characters_from(Cursor beg, Cursor end) const;
     void deposit_chatacters_to
-        (ConstUCharIter beg, ConstUCharIter end, Cursor pos = Cursor());
+        (UStringCIter beg, UStringCIter end, Cursor pos = Cursor());
     Cursor deposit_chatacters_to
         (const UChar * beg, const UChar * end, Cursor pos = Cursor());
-    bool holds_at_most_ascii_characters() const;
 
-    UChar read_character(Cursor) const;
+    // ------------------------------ accessors -------------------------------
+
     Cursor next_cursor(Cursor) const;
     Cursor previous_cursor(Cursor) const;
     Cursor constrain_cursor(Cursor) const noexcept;
+    /** The end cursor carries the same meaning as end iterators do for STL
+     *  containers, essentially "one past the end". What this means for the
+     *  actual value of the cursor is that is starts on one past the last line
+     *  of this collection.
+     *  @return
+     */
     Cursor end_cursor() const;
     bool is_valid_cursor(Cursor) const noexcept;
 
+    void render_to(TargetTextGrid &, int offset) const;
+    void render_to(TargetTextGrid && rvalue, int offset) const
+        { render_to(rvalue, offset); }
+
+    static void run_tests();
 private:
-    struct CharReader {
-        virtual ~CharReader();
-        virtual void read_char(UChar) = 0;
-        virtual void read_char(UChar, Cursor);
-    };
-
-    enum { CHAR_REMOVED, CHAR_ADDED };
-
-    void verify_cursor_validity(const char * funcname, Cursor) const;
-
-    void verify_cursors_not_crossing
-        (const char * funcname, Cursor beg, Cursor end) const;
-
-    void track_char_identity(UChar, decltype(CHAR_ADDED));
-
-    void read_characters(const char * caller,
-                         CharReader &, Cursor beg, Cursor end) const;
-
-    template <typename CharIter>
-    void track_char_identity(CharIter beg, CharIter end, decltype(CHAR_ADDED));
-
-    std::vector<std::u32string> m_text;
-    int m_non_ascii_count;
+    /** @param func must take signature:
+     *              void(*)(int line_num, int line_begin, int line_end)
+     */
+    template <typename Func>
+    void for_each_line_in_range(Cursor beg, Cursor end, Func && func) const;
+    void check_invarients() const;
+    void verify_cursor_validity(const char * caller, Cursor) const;
+    std::vector<TextLine> m_lines;
+    const RenderOptions * m_rendering_options;
 };
 
-inline void TextLines::deposit_chatacters_to
-    (ConstUCharIter beg, ConstUCharIter end, Cursor pos)
-{
-    if (beg == end) return;
-    deposit_chatacters_to(&*beg, &*(end - 1) + 1, pos);
-}
+template <typename IterT>
+class ConstIteratorPair {
+public:
+    using ValueType = decltype (*IterT());
+    using IteratorType = IterT;
+    ConstIteratorPair() {}
+    ConstIteratorPair(IteratorType beg_, IteratorType end_):
+        begin(beg_), end(end_)
+    { if (!(beg_ <= end_)) throw std::invalid_argument("Your waifu is garbage."); }
+    /** @warning Assumes that itr is from the same container as begin and end.
+     */
+    bool contains(IteratorType itr) const noexcept
+        { return begin <= itr && itr < end; }
+    bool is_behind(IteratorType itr) const noexcept
+        { return end <= itr; }
+    bool is_ahead(IteratorType itr) const noexcept
+        { return itr < begin; }
+    bool is_behind(const ConstIteratorPair & pair) const noexcept
+        { return end <= pair.begin; }
+    IteratorType begin, end;
+};
+
+class TextLine {
+public:
+    enum ContentTakingPlacement { PLACE_AT_BEGINING, PLACE_AT_END };
+    static constexpr const int MERGE_REQUESTED = -1;
+    static constexpr const int SPLIT_REQUESTED = -1;
+    using UStringCIter = TextLines::UStringCIter;
+    using IteratorPair = ConstIteratorPair<UStringCIter>;
+    TextLine();
+    explicit TextLine(const std::u32string &);
+
+    // ------------------------ whole content editing -------------------------
+
+    void constrain_to_width(int);
+    void set_content(const std::u32string &);
+    /** @warning Does not in anyway maintain ownership over the given object
+     *           reference. Given object must survive the life of this object.
+     */
+    void assign_render_options(const RenderOptions &);
+    void assign_default_render_options();
+    TextLine split(int column);
+    void take_contents_of(TextLine &, decltype(PLACE_AT_BEGINING));
+    int wipe(int beg, int end);
+    void copy_characters_from(std::u32string &, int beg, int end) const;
+    int deposit_chatacters_to
+        (UStringCIter beg, UStringCIter end, int pos);
+    int deposit_chatacters_to(const UChar * beg, const UChar * end, int pos);
+
+    // ----------------------- single character editing -----------------------
+
+    decltype (SPLIT_REQUESTED) push(int column, UChar);
+    decltype (MERGE_REQUESTED) delete_ahead(int column);
+    decltype (MERGE_REQUESTED) delete_behind(int column);
+
+    // ------------------------------ accessors -------------------------------
+
+    int recorded_grid_width() const;
+    int height_in_cells() const;
+    const std::u32string & content() const;
+    int content_length() const { return int(content().length()); }
+
+    void render_to(TargetTextGrid &, int offset, int line_number = 0) const;
+
+    static void run_tests();
+private:
+    using IteratorPairCIterator = std::vector<IteratorPair>::const_iterator;
+    void verify_column_number(const char * callername, int) const;
+    void update_ranges();
+    IteratorPairCIterator process_row
+        (TargetTextGrid & target, int offset, IteratorPairCIterator word_itr,
+         UStringCIter row_end, int line_number) const;
+    void check_invarients() const;
+
+    int m_grid_width;
+    // does not contain iterators begin and end in m_content
+    std::vector<UStringCIter> m_row_ranges;
+    // invarient -> cannot cross line range iterators
+    std::vector<IteratorPair> m_word_ranges;
+    std::u32string m_content;
+    const RenderOptions * m_rendering_options;
+};

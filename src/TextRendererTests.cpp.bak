@@ -1,0 +1,393 @@
+/****************************************************************************
+
+    File: TextRendererTests.cpp
+    Author: Andrew Janke
+    License: GPLv3
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+*****************************************************************************/
+
+#include "TextRendererTests.hpp"
+#include "TextRenderer.hpp"
+
+#include <stdexcept>
+
+#include <cassert>
+
+namespace {
+
+static constexpr const int DEFAULT_MAX_DIM = 100;
+
+class SimpleString final : public GridWriter {
+public:
+    ~SimpleString() override;
+    void write
+        (ColorPair, Cursor, const std::u32string & str) override
+        { product_string += str; }
+    void write(ColorPair, Cursor, UChar c) override
+        { product_string += c; }
+    int width () const override { return DEFAULT_MAX_DIM; }
+    int height() const override { return DEFAULT_MAX_DIM; }
+    std::u32string product_string;
+};
+class HighlightTracker final : public GridWriter {
+public:
+    HighlightTracker(): highlighted_count(0), non_highlighted_count(0) {}
+    void write
+        (ColorPair, Cursor, const std::u32string &) override;
+    void write(ColorPair, Cursor, UChar c) override;
+    int width () const override { return DEFAULT_MAX_DIM; }
+    int height() const override { return DEFAULT_MAX_DIM; }
+    int highlighted_count;
+    int non_highlighted_count;
+};
+class MultiLine final : public GridWriter {
+public:
+    static constexpr const int LINE_MAX = 80;
+    void write
+        (ColorPair, Cursor, const std::u32string &) override;
+    void write(ColorPair, Cursor, UChar c) override;
+    int width () const override { return LINE_MAX ; }
+    int height() const override { return DEFAULT_MAX_DIM; }
+    void adjust_size_for(Cursor);
+    std::vector<std::u32string> lines;
+    Cursor last_cursor_of_string_write;
+private:
+    void check_invarients() const;
+};
+class NewLineTracker final : public GridWriter {
+public:
+    static constexpr const int MAX_DIM = 80;
+    void write
+        (ColorPair, Cursor, const std::u32string &) override;
+    void write(ColorPair, Cursor, UChar c) override;
+    int width () const override { return MAX_DIM; }
+    int height() const override { return MAX_DIM; }
+    bool new_lines_are_ok() const;
+private:
+    void ensure_resources_available();
+    std::vector<int > m_chars_per_line;
+    std::vector<bool> m_new_lines_covered;
+};
+class FillTracker final : public GridWriter {
+public:
+    static constexpr const int MAX_DIM = 80;
+    void write
+        (ColorPair, Cursor, const std::u32string &) override;
+    void write(ColorPair, Cursor, UChar c) override;
+    int width () const override { return MAX_DIM; }
+    int height() const override { return MAX_DIM; }
+    bool filled() const;
+private:
+    void hit_cell(Cursor);
+    std::vector<bool> m_hit_cells;
+};
+
+
+void push_string_to(const std::u32string &, TextLines *);
+
+} // end of <anonymous> namespace
+
+void run_text_renderer_tests() {
+
+    // 10 test cases
+    assert(TextRenderer::is_whitespace(TextLines::NEW_LINE));
+    // 1. simply render a single string (word)
+    {
+    static constexpr const auto * const TEST_TEXT = U"hello there";
+    TextLines tlines;
+    TextRenderer hltr;
+    SimpleString writer;
+    hltr.setup_defaults();
+    push_string_to(TEST_TEXT, &tlines);
+    hltr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(writer.product_string.substr(0, std::u32string(TEST_TEXT).length()) == TEST_TEXT);
+    }
+    // 2. highlight keywords
+    {
+    TextLines tlines;
+    push_string_to(U"function do_something() end", &tlines);
+    HighlightTracker writer;
+    TextRenderer hltr;
+    hltr.add_keyword(U"function");
+    hltr.add_keyword(U"end");
+    hltr.setup_defaults();
+    hltr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(writer.highlighted_count == 2 &&
+           writer.non_highlighted_count == 1);
+    }
+    // 3. line wrapping
+    {
+    TextLines tlines;
+    push_string_to(U"There are so many things in the world which both confuse "
+                   "and amaze me. I'm not quite sure how to handle all of it, "
+                   "but I'll do the best that I can.", &tlines);
+    MultiLine writer;
+    TextRenderer hltr;
+    hltr.setup_defaults();
+    hltr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(writer.lines.size() > 1 &&
+           writer.last_cursor_of_string_write.line > 0);
+    }
+    // 4. regular multi line
+    auto first_part_match = []
+        (const std::u32string & first, const std::u32string & match)
+    { return match.substr(0, first.length()) == first; };
+    {
+    TextLines tlines;
+    MultiLine writer;
+    TextRenderer hltr;
+    push_string_to(U"banana\napple\norange", &tlines);
+    hltr.setup_defaults();
+    hltr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(writer.lines[3][0] == U' ');
+    assert(first_part_match(U"banana ", writer.lines[0]));
+    assert(first_part_match(U"apple " , writer.lines[1]));
+    assert(first_part_match(U"orange ", writer.lines[2]));
+    }
+    // 5. different starting line (start on line one, rather than zero)
+    {
+    static_assert(TextLines::NEW_LINE == U'\n', "Test case needs an upgrade.");
+    TextLines tlines;
+    push_string_to(U"apple\nbanana\npear", &tlines);
+    MultiLine writer;
+    TextRenderer hltr;
+    hltr.setup_defaults();
+    hltr.render_lines_to(writer, Cursor(1, 0), tlines);
+    assert(writer.lines[2][0] == U' ');
+    assert(first_part_match(U"banana", writer.lines[0]));
+    assert(first_part_match(U"pear"  , writer.lines[1]));
+    }
+    // 6. line wrap large continuous non-whitespace string (80+ chars)
+    {
+    static_assert(MultiLine::LINE_MAX == 80, "Case 5 needs rewriting.");
+    TextLines tlines;
+    push_string_to(U"abcdefghijklmnopqrst""abcdefghijklmnopqrst"
+                   "abcdefghijklmnopqrst""abcdefghijklmnopqrst"
+                   "1"/* 81 characters exactly */, &tlines);
+    TextRenderer hltr;
+    MultiLine writer;
+    hltr.setup_defaults();
+    hltr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(writer.lines[2][0] == U' ');
+    assert(writer.lines[0].size() == MultiLine::LINE_MAX &&
+           writer.lines[1][0] == U'1');
+    }
+    // 7. all cells must be filled!
+    {
+    TextLines tlines;
+    push_string_to(U"I could copy filler text of questionable legality for "
+                   "use, or I could simply write my own filler text.\nI've "
+                   "decided not to try, and use my own instead. I will be as "
+                   "needlessly verbose as I can for the purposes of testing "
+                   "this program.", &tlines);
+    TextRenderer hltr;
+    FillTracker writer;
+    hltr.setup_defaults();
+    hltr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(writer.filled());
+    }
+    // 8. handle tab characters
+    {
+    static_assert(TextRenderer::DEFAULT_TAB_WIDTH == 4,
+                  "This test case needs to be changed.");
+    TextLines tlines;
+    push_string_to(U"\tapple\n"
+                    "\tbanana\n"
+                    "orange", &tlines);
+    TextRenderer txtrndr;
+    MultiLine writer;
+    txtrndr.setup_defaults();
+    txtrndr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(first_part_match(U"    apple" , writer.lines[0]));
+    assert(first_part_match(U"    banana", writer.lines[1]));
+    assert(first_part_match(U"orange", writer.lines[2]));
+    }
+    // 9. handle cursor mapping
+    // still no idea on how exactly I want to implement this...
+    // 10. all newlines must be handled properly
+    {
+    TextLines tlines;
+    TextRenderer txtrndr;
+    NewLineTracker writer;
+    txtrndr.setup_defaults();
+    txtrndr.render_lines_to(writer, Cursor(0, 0), tlines);
+    assert(writer.new_lines_are_ok());
+    }
+    // We need to test user selection highlighting somehow
+    // 11. highlight mid word
+    // 12. highlight two words, one partial at begining, the other partial at
+    //     the ending
+    // 13. Whole word highlighting (one word exactly)
+    // 14. multiple lines highlighted (three)
+}
+
+namespace {
+
+void push_string_to(const std::u32string & ustr, TextLines * tlines) {
+    Cursor cursor(0, 0);
+    for (auto uc : ustr) {
+        cursor = tlines->push(cursor, uc);
+    }
+}
+
+
+// ----------------------------------------------------------------------------
+
+SimpleString::~SimpleString() {}
+
+// ----------------------------------------------------------------------------
+
+void HighlightTracker::write
+    (ColorPair colors, Cursor cur, const std::u32string &)
+{
+    verify_cursor_validity("HighlighterWriterDefs::HighlightTracker::write", cur);
+    if (colors.fore == TextRenderer::default_keyword_fore_c)
+        ++highlighted_count;
+    else
+        ++non_highlighted_count;
+}
+
+void HighlightTracker::write
+    (ColorPair, Cursor cur, UChar)
+{ verify_cursor_validity("HighlighterWriterDefs::HighlightTracker::write", cur); }
+
+// ----------------------------------------------------------------------------
+
+void MultiLine::write
+    (ColorPair, Cursor cursor, const std::u32string & buff)
+{
+    check_invarients();
+    verify_cursor_validity("HighlighterWriterDefs::MultiLine::write", cursor);
+    adjust_size_for(cursor);
+    last_cursor_of_string_write = cursor;
+    *(lines.begin() + cursor.line) += buff;
+    check_invarients();
+}
+
+void MultiLine::write
+    (ColorPair, Cursor cursor, UChar c)
+{
+    check_invarients();
+    verify_cursor_validity("HighlighterWriterDefs::MultiLine::write", cursor);
+    adjust_size_for(cursor);
+
+    if (c != TextLines::NEW_LINE) {
+        *(lines.begin() + cursor.line) += c;
+    }
+    check_invarients();
+}
+
+void MultiLine::adjust_size_for(Cursor cur) {
+    // resize: no information on preserving value of previous lines
+    while (int(lines.size()) <= cur.line) {
+        lines.emplace_back();
+    }
+}
+
+/* private */ void MultiLine::check_invarients() const {
+    for (const auto & line : lines) {
+        assert(line.size() <= LINE_MAX);
+    }
+}
+
+// ----------------------------------------------------------------------------
+
+void NewLineTracker::write
+    (ColorPair, Cursor cursor, const std::u32string & buff)
+{
+    verify_cursor_validity("TextWriterDefs::NewLineTracker::write", cursor);
+    ensure_resources_available();
+    assert(cursor.column >= m_chars_per_line.back());
+    m_chars_per_line.back() += int(buff.size());
+}
+
+void NewLineTracker::write
+    (ColorPair, Cursor cursor, UChar c)
+{
+    verify_cursor_validity("TextWriterDefs::NewLineTracker::write", cursor);
+    ensure_resources_available();
+    if (c == TextLines::NEW_LINE) {
+        assert(cursor.column == width() - 1 &&
+               cursor.line   == int(m_chars_per_line.size()) - 1);
+        m_new_lines_covered[std::size_t(cursor.line)] = true;
+        if (int(m_chars_per_line.size()) == height())
+            return;
+        m_chars_per_line.push_back(0);
+    } else {
+        ++m_chars_per_line.back();
+    }
+}
+
+bool NewLineTracker::new_lines_are_ok() const {
+    for (int char_count : m_chars_per_line) {
+        if (char_count != width())
+            return false;
+    }
+    for (bool b : m_new_lines_covered) {
+        if (!b) return false;
+    }
+    return true;
+}
+
+/* private */ void NewLineTracker::ensure_resources_available() {
+    if (m_chars_per_line.empty())
+        m_chars_per_line.push_back(0);
+    if (m_new_lines_covered.empty())
+        m_new_lines_covered.resize(std::size_t(height()), false);
+}
+
+// ----------------------------------------------------------------------------
+
+void FillTracker::write
+    (ColorPair, Cursor cur, const std::u32string & buff)
+{
+    verify_cursor_validity("HighlighterWriterDefs::FillTracker::write", cur);
+    if (m_hit_cells.empty())
+        m_hit_cells.resize(std::size_t(width()*height()), false);
+    int end_col = cur.column + int(buff.size());
+    for (; cur.column != end_col; ++cur.column) {
+        hit_cell(cur);
+    }
+}
+
+void FillTracker::write
+    (ColorPair, Cursor cur, UChar uchr)
+{
+    verify_cursor_validity("HighlighterWriterDefs::FillTracker::write", cur);
+    if (uchr == TextLines::NEW_LINE) return;
+    if (m_hit_cells.empty())
+        m_hit_cells.resize(std::size_t(width()*height()), false);
+    hit_cell(cur);
+}
+
+bool FillTracker::filled() const {
+    for (bool is_hit : m_hit_cells) {
+        if (!is_hit) return false;
+    }
+    return true;
+}
+
+/* private */ void FillTracker::hit_cell(Cursor cur) {
+    auto index = std::size_t(cur.column + cur.line*width());
+    if (m_hit_cells[index]) {
+        throw std::runtime_error(
+            "HighlighterWriterDefs::FillTracker::hit_cell: a cell should "
+            "be hit exactly once, not more, by the rendering algorithm."  );
+    }
+    m_hit_cells[index] = true;
+}
+
+} // end of <anonymous> namespace

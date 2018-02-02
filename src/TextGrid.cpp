@@ -25,6 +25,8 @@
 
 #include <cassert>
 
+TextGrid::TargetInterface::~TargetInterface() {}
+
 TextGrid::TextGrid():
     m_font(nullptr),
     m_cell_width(0.f),
@@ -75,11 +77,17 @@ void TextGrid::set_cell
     cell.background.set_color(back);
     if (!m_font) {
         cell.character.set_color(fore);
+        auto char_color = cell.character.color();
+        auto back_color = cell.background.color();
+        int j = 0; ++j;
         return;
     }
     const auto & glyph = m_font->getGlyph(uchr, unsigned(m_char_size), false);    
     cell.character = DrawCharacter(glyph, fore);
-    cell.character.move(cursor.column*m_cell_width, cursor.line*m_cell_height);
+    cell.character.move(cursor.column*m_cell_width  + m_location.x,
+                        cursor.line  *m_cell_height + m_location.y);
+    auto char_color = cell.character.color();
+    auto back_color = cell.background.color();
     cell.identity = uchr;
 }
 
@@ -124,6 +132,8 @@ void TextGrid::assign_font(const sf::Font & font, int font_size) {
     for (Cursor cur; cur != end_cursor(); cur = next_cursor(cur)) {
         auto & cell = m_cells[cursor_to_cell(cur)];
         const auto & glyph = m_font->getGlyph(cell.identity, unsigned(m_char_size), false);
+        auto char_color = cell.character.color();
+        auto back_color = cell.background.color();
         cell.character = DrawCharacter(glyph, cell.character.color());
         cell.background.set_size(m_cell_width, m_cell_height);
     }
