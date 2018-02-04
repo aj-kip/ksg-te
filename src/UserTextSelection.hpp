@@ -48,7 +48,7 @@ public:
     };
     // Cursors always in context of textlines (NOT the text grid)
     UserTextSelection(): m_alt_held(false) {}
-    UserTextSelection(Cursor starting_position);
+    explicit UserTextSelection(Cursor starting_position);
 
     // events to move primary
     void move_left(const TextLines &);

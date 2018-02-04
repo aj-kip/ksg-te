@@ -452,6 +452,7 @@ void verify_text_line_content_string(const char * caller, const std::u32string &
 
 TextLine::TextLine():
     m_grid_width(std::numeric_limits<int>::max()),
+    m_extra_end_space(0),
     m_rendering_options(&default_rendering_options)
 {
     check_invarients();
@@ -459,6 +460,7 @@ TextLine::TextLine():
 
 /* explicit */ TextLine::TextLine(const std::u32string & content_):
     m_grid_width(std::numeric_limits<int>::max()),
+    m_extra_end_space(0),
     m_content(content_),
     m_rendering_options(&default_rendering_options)
 {
@@ -585,40 +587,22 @@ int TextLine::deposit_chatacters_to
 int TextLine::recorded_grid_width() const { return m_grid_width; }
 
 int TextLine::height_in_cells() const {
-    return 1 + int(m_row_ranges.size());
+    return 1 + int(m_row_ranges.size()) + m_extra_end_space;
 }
 
 const std::u32string & TextLine::content() const { return m_content; }
-#if 0
-namespace {
 
-void print_range(const TextLine::IteratorPair & pair) {
-    assert(pair.begin <= pair.end);
-    std::cout << "\"";
-    for (auto itr = pair.begin; itr != pair.end; ++itr) {
-        std::cout << char(0x7F & *itr);
-    }
-    std::cout << "\"" << std::endl;
-}
-
-}
-#endif
 void TextLine::render_to
     (TargetTextGrid & target, int offset, int line_number) const
 {
 
-    if (offset < 0) {
-        throw std::invalid_argument("TextLine::render_to: offset must be a "
-                                    "non-negative integer.");
-    }
     auto row_begin = m_content.begin();
     auto cur_word_range = m_word_ranges.begin();
     using IterPairIter = IteratorPairCIterator;
-
     auto process_row_o =
         [this, &target, &offset, &line_number]
         (IterPairIter word_itr, UStringCIter end)
-    { return process_row(target, offset++, word_itr, end, line_number); };
+    { return render_row(target, offset++, word_itr, end, line_number); };
 
     for (auto row_end : m_row_ranges) {
         // do stuff with range
@@ -626,16 +610,28 @@ void TextLine::render_to
         row_begin = row_end;
     }
     cur_word_range = process_row_o(cur_word_range, m_content.end());
-#   if 0
-    for (auto word_range : m_word_ranges) {
-        print_range(word_range);
+    Cursor write_pos(offset + int(m_row_ranges.size()), 0);
+    if (m_extra_end_space == 1) {
+        write_pos.column = 0;
+    } else if (m_row_ranges.empty()) {
+        write_pos.column = content_length();
+        --write_pos.line;
+    } else {
+        write_pos.column = int(m_content.end() - m_row_ranges.back()) + 1;
+        --write_pos.line;
     }
-    std::cout << "At:" << std::endl;
-    if (cur_word_range != m_word_ranges.end())
-        print_range(*cur_word_range);
-    else
-        std::cout << "<END>" << std::endl;
-#   endif
+    auto color_pair = m_rendering_options->get_default_pair();
+    if (m_rendering_options->color_adjust_for
+            (Cursor(line_number, content_length())) == RenderOptions::invert)
+    {
+        int j = 0;
+        ++j;
+    }
+    color_pair = m_rendering_options->color_adjust_for
+        (Cursor(line_number, content_length()))(color_pair);
+    target.set_cell(write_pos, U' ', color_pair);
+    ++write_pos.column;
+    fill_row_with_blanks(target, write_pos);
     assert(cur_word_range == m_word_ranges.end());
 }
 
@@ -706,21 +702,14 @@ void TextLine::render_to
             working_width -= (ip.end - ip.begin);
         }
     }
+    m_extra_end_space = (working_width == 0) ? 1 : 0;
     check_invarients();
 }
 
-/* private */ TextLine::IteratorPairCIterator TextLine::process_row
+/* private */ TextLine::IteratorPairCIterator TextLine::render_row
     (TargetTextGrid & target, int offset, IteratorPairCIterator word_itr,
      UStringCIter row_end, int line_number) const
 {
-#   if 0
-    struct IterRange {
-        IterRange(IteratorPair range_): range(range_) {}
-        UStringCIter begin() const { return range.begin; }
-        UStringCIter end  () const { return range.end  ; }
-        IteratorPair range;
-    };
-#   endif
     Cursor write_pos(offset, 0);
     for (; word_itr->is_behind(row_end) && word_itr != m_word_ranges.end();
          ++word_itr)
@@ -741,16 +730,33 @@ void TextLine::render_to
                 ++write_pos.column;
         }
     }
+    if (offset < 0) return word_itr;
     // fill rest of grid row
+#   if 0
+    if (m_extra_end_space == 0) {
+        auto color_pair = m_rendering_options->get_default_pair();
+        Cursor end_cursor(line_number, content_length());
+        color_pair = m_rendering_options->color_adjust_for(end_cursor)(color_pair);
+        target.set_cell(write_pos, U' ', color_pair);
+        ++write_pos.column;
+    }
+#   endif
+    fill_row_with_blanks(target, write_pos);
+    return word_itr;
+}
+
+/* private */ void TextLine::fill_row_with_blanks
+    (TargetTextGrid & target, Cursor write_pos) const
+{
     auto def_pair = m_rendering_options->get_default_pair();
     for (; write_pos.column != m_grid_width; ++write_pos.column) {
         target.set_cell(write_pos, U' ', def_pair);
     }
-    return word_itr;
 }
 
 /* private */ void TextLine::check_invarients() const {
     assert(m_rendering_options);
+    assert(m_extra_end_space == 0 || m_extra_end_space == 1);
     if (m_content.empty()) return;
     if (!m_row_ranges.empty()) {
         auto last = m_row_ranges.front();

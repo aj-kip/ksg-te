@@ -26,6 +26,13 @@
 
 #include <cassert>
 
+namespace {
+
+template <typename Func>
+void do_n_times(int i, Func && f);
+
+} // end of <anonymous> namespace
+
 UserTextSelection::UserTextSelection(Cursor starting_position):
     m_alt_held(false            ),
     m_primary (starting_position),
@@ -72,10 +79,17 @@ void UserTextSelection::page_up
     constrain_primary_update_alt(tlines);
 }
 
+// this function needs test cases
 bool UserTextSelection::contains(Cursor cursor) const {
     auto end_ = end(), beg = begin();
-    return cursor.line >= beg.line    && cursor.column >= beg.column &&
-           cursor.line <  end_.column && cursor.column <  end_.column;
+    if (cursor.line > beg.line && cursor.line < end_.line) return true;
+    if (beg.line == end_.line && cursor.line == beg.line)
+        return cursor.column >= beg.column && cursor.column < end_.column;
+    if (cursor.line == beg.line ) return cursor.column >= beg.column;
+    // note: if end and begin on the same line, this branch will be skipped
+    //       on contained cursors anyway
+    if (cursor.line == end_.line) return cursor.column < end_.column;
+    return false;
 }
 
 UserTextSelection::StringSelectionIters UserTextSelection::
@@ -116,7 +130,7 @@ bool UserTextSelection::operator != (const UserTextSelection & rhs) const
     { return !equal(rhs); }
 
 /* static */ void UserTextSelection::run_tests() {
-    const TextLines test_tlines_c = TextLines(
+    static const TextLines test_tlines_c = TextLines(
         U"sample text\n"
          "second line with five words\n"
          "and then finally the third line\n"
@@ -124,8 +138,7 @@ bool UserTextSelection::operator != (const UserTextSelection & rhs) const
     // 1. move right
     {
     UserTextSelection uts(Cursor(0, 3));
-    for (int i = 0; i != 3; ++i)
-        uts.move_right(test_tlines_c);
+    do_n_times(3, [&uts]() { uts.move_right(test_tlines_c); });
     assert(uts.begin() == uts.end());
     assert(uts.begin() == Cursor(0, 6));
     }
@@ -202,6 +215,57 @@ bool UserTextSelection::operator != (const UserTextSelection & rhs) const
     assert(uts.begin() == Cursor(0, 9));
     }
     // 12. hold alt + move left -> previous line
+    {}
+    // need to test the fuck out of contains
+    // 13. single line selection, three points
+    {
+    UserTextSelection uts(Cursor(1, 3));
+    uts.hold_alt_cursor();
+    do_n_times(4, [&](){ uts.move_right(test_tlines_c); });
+    assert( uts.contains(Cursor(1, 3)));
+    assert( uts.contains(Cursor(1, 6)));
+    assert(!uts.contains(Cursor(1, 2)));
+    assert(!uts.contains(Cursor(1, 7)));
+    }
+    // 14. single line, two "very much outside" points
+    {
+    UserTextSelection uts(Cursor(1, 3));
+    uts.hold_alt_cursor();
+    for (int i = 0; i != 4; ++i)
+        uts.move_right(test_tlines_c);
+    assert(!uts.contains(Cursor(0, 3)));
+    assert(!uts.contains(Cursor(2, 1)));
+    }
+    // 15. two lines, four points
+    {
+    UserTextSelection uts(Cursor(1, 3));
+    uts.hold_alt_cursor();
+    do_n_times(28, [&](){ uts.move_right(test_tlines_c); });
+    assert( uts.contains(Cursor(1, 3)));
+    assert( uts.contains(Cursor(2, 2)));
+    assert(!uts.contains(Cursor(1, 2)));
+    assert(!uts.contains(Cursor(2, 3)));
+    }
+    // 16. two line, three "very much outside" points
+    {
+    UserTextSelection uts(Cursor(1, 5));
+    uts.hold_alt_cursor();
+    do_n_times(28, [&](){ uts.move_right(test_tlines_c); });
+    assert(!uts.contains(Cursor(3, 5)));
+    assert(!uts.contains(Cursor(0, 0)));
+    assert(!uts.contains(Cursor(3, 1)));
+    }
+    // 17. three lines, four points (the extremes)
+    {
+    UserTextSelection uts(Cursor(1, 9));
+    uts.hold_alt_cursor();
+    do_n_times(18 + 31 + 4, [&](){ uts.move_right(test_tlines_c); });
+    assert( uts.contains(Cursor(1, 9)));
+    assert( uts.contains(Cursor(3, 3)));
+    assert( uts.contains(Cursor(2, 3)));
+    assert(!uts.contains(Cursor(1, 8)));
+    assert(!uts.contains(Cursor(3, 4)));
+    }
 }
 
 /* private */ void UserTextSelection::constrain_primary_update_alt
@@ -250,3 +314,11 @@ UserTextSelection::StringSelectionIters::StringSelectionIters
            m_highlight_end <= m_end;
 }
 
+namespace {
+
+template <typename Func>
+void do_n_times(int i, Func && f) {
+    while (i--) f();
+}
+
+} // end of <anonymous> namespace

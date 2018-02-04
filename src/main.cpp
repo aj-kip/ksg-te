@@ -35,7 +35,7 @@
 #include "UserTextSelection.hpp"
 
 void handle_event(TextLines *, const sf::Event &);
-void handle_event(UserTextSelection *, const TextLines & tlines, const sf::Event &);
+void handle_event(UserTextSelection *, TextLines &tlines, const sf::Event &);
 
 class EditorDialog final : public ksg::Frame {
 public:
@@ -55,10 +55,10 @@ private:
 };
 
 int main() {
-#   ifndef NDEBUG
+#   if 0//ndef NDEBUG
     TextLine::run_tests();
     TextLines::run_tests();
-    UserTextSelection::run_tests();
+    //UserTextSelection::run_tests();
 
 #   endif
     EditorDialog editor;
@@ -83,23 +83,12 @@ int main() {
             if (event.type == sf::Event::Closed)
                 window.close();
         }
-        //if (editor.requesting_to_close())
-            //window.close();
+
         editor.do_update(clock.getElapsedTime().asSeconds());
         clock.restart();
-#       if 0
-        if (has_events) {
-#       endif
-            window.clear();
-            window.draw(editor);
-            window.display();
-
-#       if 0
-            has_events = false;
-        } else {
-            sf::sleep(sf::microseconds(16667));
-        }
-#       endif
+        window.clear();
+        window.draw(editor);
+        window.display();
     }
     return 0;
 }
@@ -116,10 +105,11 @@ void EditorDialog::setup_dialog(const sf::Font & font) {
          "    c[1] = c[1] + a*b\n"
          "    return c\n"
          "end\n"
-         "This is a very long line which contains over eighty characters, which is made evident by this very verbose sentence.";
-    Cursor cursor;
-    for (auto uchr : sample_code)
-        cursor = m_lines.push(cursor, uchr);
+         "This is a very long line which contains over eighty characters, which is made evident by this very verbose sentence.\n"
+         "abcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrst\n"
+         "last line.";
+
+    m_lines.set_content(sample_code);
     m_grid.set_size_in_characters(80, 30);
     m_render_options.add_keyword(U"function");
     m_render_options.add_keyword(U"local");
@@ -144,6 +134,7 @@ void EditorDialog::process_event(const sf::Event & event) {
     handle_event(&m_user_selection, m_lines, event);
     if (old_selection != m_user_selection) {
         m_render_options.set_text_selection(m_user_selection);
+        m_render_options.toggle_cursor_flash();
         m_lines.render_to(m_grid.as_target_interface(), 0);
     }
 }
@@ -171,7 +162,7 @@ void handle_event(TextLines * text, const sf::Event & event) {
 }
 
 void handle_event
-    (UserTextSelection * selection, const TextLines & tlines,
+    (UserTextSelection * selection, TextLines & tlines,
      const sf::Event & event)
 {
     assert(selection);
@@ -195,12 +186,23 @@ void handle_event
         case sf::Keyboard::Right:
             selection->move_right(tlines);
             break;
-        default: break;
+        case sf::Keyboard::Delete:
+            tlines.delete_ahead(selection->begin());
+            break;
+        case sf::Keyboard::BackSpace:
+            tlines.delete_behind(selection->begin());
+            selection->move_left(tlines);
+            break;
+        default:break;
         }
         break;
     case sf::Event::KeyPressed:
         break;
+    case sf::Event::TextEntered:
+        if (event.text.unicode == 8 || event.text.unicode == 127) break;
+        tlines.push(selection->begin(), UChar(event.text.unicode));
+        selection->move_right(tlines);
+        break;
     default: break;
     }
-    ;
 }

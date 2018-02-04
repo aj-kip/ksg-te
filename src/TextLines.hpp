@@ -66,6 +66,7 @@ public:
     Cursor next_cursor(Cursor) const;
     Cursor previous_cursor(Cursor) const;
     Cursor constrain_cursor(Cursor) const noexcept;
+
     /** The end cursor carries the same meaning as end iterators do for STL
      *  containers, essentially "one past the end". What this means for the
      *  actual value of the cursor is that is starts on one past the last line
@@ -114,6 +115,7 @@ public:
     IteratorType begin, end;
 };
 
+// content string + extra ending space
 class TextLine {
 public:
     enum ContentTakingPlacement { PLACE_AT_BEGINING, PLACE_AT_END };
@@ -161,12 +163,17 @@ private:
     using IteratorPairCIterator = std::vector<IteratorPair>::const_iterator;
     void verify_column_number(const char * callername, int) const;
     void update_ranges();
-    IteratorPairCIterator process_row
+    IteratorPairCIterator render_row
         (TargetTextGrid & target, int offset, IteratorPairCIterator word_itr,
          UStringCIter row_end, int line_number) const;
+    void fill_row_with_blanks(TargetTextGrid &, Cursor write_pos) const;
     void check_invarients() const;
 
     int m_grid_width;
+    // required for edge case were all cells on the last row are occupied by
+    // content, and therefore needing an extra space on the next so that the
+    // user can type text at the end of the line
+    int m_extra_end_space;
     // does not contain iterators begin and end in m_content
     std::vector<UStringCIter> m_row_ranges;
     // invarient -> cannot cross line range iterators
