@@ -31,6 +31,8 @@ namespace {
 template <typename Func>
 void do_n_times(int i, Func && f);
 
+void do_user_text_selection_tests();
+
 } // end of <anonymous> namespace
 
 UserTextSelection::UserTextSelection(Cursor starting_position):
@@ -79,6 +81,32 @@ void UserTextSelection::page_up
     constrain_primary_update_alt(tlines);
 }
 
+void UserTextSelection::push(TextLines * textlines, UChar uchar) {
+    verify_text_lines_pointer("UserTextSelection::push", textlines);
+    if (m_alt_held && m_primary != m_alt) {
+        m_primary = textlines->wipe(begin(), end());
+    }
+    m_alt = m_primary = textlines->push(m_primary, uchar);
+}
+
+void UserTextSelection::delete_ahead(TextLines * textlines) {
+    verify_text_lines_pointer("UserTextSelection::delete_ahead", textlines);
+    if (m_alt_held) {
+        m_alt = m_primary = textlines->wipe(begin(), end());
+    } else {
+        m_alt = m_primary = textlines->delete_ahead(m_primary);
+    }
+}
+
+void UserTextSelection::delete_behind(TextLines * textlines) {
+    verify_text_lines_pointer("UserTextSelection::delete_behind", textlines);
+    if (m_alt_held) {
+        m_alt = m_primary = textlines->wipe(begin(), end());
+    } else {
+        m_alt = m_primary = textlines->delete_behind(m_primary);
+    }
+}
+
 // this function needs test cases
 bool UserTextSelection::contains(Cursor cursor) const {
     auto end_ = end(), beg = begin();
@@ -90,29 +118,6 @@ bool UserTextSelection::contains(Cursor cursor) const {
     //       on contained cursors anyway
     if (cursor.line == end_.line) return cursor.column < end_.column;
     return false;
-}
-
-UserTextSelection::StringSelectionIters UserTextSelection::
-    ranges_for_string(Cursor cursor, const std::u32string & buff,
-                      const TextLines & tlines) const
-{
-    auto itr_beg = buff.begin(), itr_highlight_beg = buff.begin();
-    const auto beg_cursor = begin();
-    while (cursor != beg_cursor && itr_highlight_beg != buff.end()) {
-        ++itr_highlight_beg;
-        cursor = tlines.next_cursor(cursor);
-    }
-    if (itr_highlight_beg == buff.end()) {
-        return StringSelectionIters(itr_beg, buff.end(), buff.end(), buff.end());
-    }
-    const auto end_cursor = end();
-    auto itr_highlight_end = itr_highlight_beg;
-    while (cursor != end_cursor && itr_highlight_end != buff.end()) {
-        ++itr_highlight_end;
-        cursor = tlines.next_cursor(cursor);
-    }
-    return StringSelectionIters
-        (itr_beg, itr_highlight_beg, itr_highlight_end, buff.end());
 }
 
 Cursor UserTextSelection::begin() const {
@@ -129,7 +134,47 @@ bool UserTextSelection::operator == (const UserTextSelection & rhs) const
 bool UserTextSelection::operator != (const UserTextSelection & rhs) const
     { return !equal(rhs); }
 
-/* static */ void UserTextSelection::run_tests() {
+/* static */ void UserTextSelection::run_tests()
+    { do_user_text_selection_tests(); }
+
+/* private */ void UserTextSelection::constrain_primary_update_alt
+    (const TextLines & tlines)
+{
+    m_primary = tlines.constrain_cursor(m_primary);
+    if (!m_alt_held)
+        m_alt = m_primary;
+}
+
+/* private */ bool UserTextSelection::primary_is_ahead() const {
+    if (m_primary.line > m_alt.line) return true;
+    return m_primary.column > m_alt.column;
+}
+
+/* private */ bool UserTextSelection::equal
+    (const UserTextSelection & rhs) const
+{
+    return rhs.m_alt == m_alt && rhs.m_alt_held == m_alt_held &&
+           rhs.m_primary == m_primary;
+}
+
+/* private */ void UserTextSelection::verify_text_lines_pointer
+    (const char * caller, TextLines * textlines) const
+{
+    if (textlines) return;
+    throw std::invalid_argument
+        (std::string(caller) + ": TextLines pointer parameter must be set.");
+}
+
+// ----------------------------------------------------------------------------
+
+namespace {
+
+template <typename Func>
+void do_n_times(int i, Func && f) {
+    while (i--) f();
+}
+
+void do_user_text_selection_tests() {
     static const TextLines test_tlines_c = TextLines(
         U"sample text\n"
          "second line with five words\n"
@@ -266,59 +311,6 @@ bool UserTextSelection::operator != (const UserTextSelection & rhs) const
     assert(!uts.contains(Cursor(1, 8)));
     assert(!uts.contains(Cursor(3, 4)));
     }
-}
-
-/* private */ void UserTextSelection::constrain_primary_update_alt
-    (const TextLines & tlines)
-{
-    m_primary = tlines.constrain_cursor(m_primary);
-    if (!m_alt_held)
-        m_alt = m_primary;
-}
-
-/* private */ bool UserTextSelection::primary_is_ahead() const {
-    if (m_primary.line > m_alt.line) return true;
-    return m_primary.column > m_alt.column;
-}
-
-/* private */ bool UserTextSelection::equal
-    (const UserTextSelection & rhs) const
-{
-    return rhs.m_alt == m_alt && rhs.m_alt_held == m_alt_held &&
-           rhs.m_primary == m_primary;
-}
-
-// ----------------------------------------------------------------------------
-
-UserTextSelection::StringSelectionIters::StringSelectionIters() {}
-
-UserTextSelection::StringSelectionIters::StringSelectionIters
-    (Iter beg_, Iter highlight_beg_, Iter highlight_end_, Iter end_):
-    m_begin(beg_),
-    m_highlight_beg(highlight_beg_),
-    m_highlight_end(highlight_end_),
-    m_end(end_)
-{
-    if (!iterators_are_good()) {
-        throw std::invalid_argument(
-            "UserTextSelection::StringSelectionIters::StringSelectionIters: "
-            "for each iterator from left to right, the right iterator must "
-            "be equal or greater than the left.");
-    }
-}
-
-/* private */ bool UserTextSelection::StringSelectionIters::
-    iterators_are_good() const
-{
-    return m_begin <= m_highlight_beg && m_highlight_beg <= m_highlight_end &&
-           m_highlight_end <= m_end;
-}
-
-namespace {
-
-template <typename Func>
-void do_n_times(int i, Func && f) {
-    while (i--) f();
 }
 
 } // end of <anonymous> namespace

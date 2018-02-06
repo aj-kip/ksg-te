@@ -29,34 +29,21 @@ class TextLines;
 
 class UserTextSelection {
 public:
-    class StringSelectionIters {
-    public:
-        enum class HighlightBool { HIGHLIGHT, DO_NOT_HIGHLIGHT };
-        using Iter = std::u32string::const_iterator;
-        StringSelectionIters();
-        StringSelectionIters(Iter beg_, Iter highlight_beg_,
-                             Iter highlight_end_, Iter end_);
-        // [begin highlight_beg) no highlight
-        // [highlight_beg highlight_end) highlight
-        // [highlight_end end) no highlight
-        template <typename Func>
-        void for_each_iterator_pair(Func && f) const;
-    private:
-        void check_invarients() const;
-        bool iterators_are_good() const;
-        Iter m_begin, m_highlight_beg, m_highlight_end, m_end;
-    };
     // Cursors always in context of textlines (NOT the text grid)
     UserTextSelection(): m_alt_held(false) {}
     explicit UserTextSelection(Cursor starting_position);
 
     // events to move primary
-    void move_left(const TextLines &);
+    void move_left (const TextLines &);
     void move_right(const TextLines &);
-    void move_down(const TextLines &);
-    void move_up(const TextLines &);
-    void page_down(const TextLines &, int page_size);
-    void page_up(const TextLines &, int page_size);
+    void move_down (const TextLines &);
+    void move_up   (const TextLines &);
+    void page_down (const TextLines &, int page_size);
+    void page_up   (const TextLines &, int page_size);
+
+    void push         (TextLines *, UChar);
+    void delete_ahead (TextLines *);
+    void delete_behind(TextLines *);
 
     // events controlling alt
     void hold_alt_cursor   () { m_alt_held = true ; }
@@ -64,9 +51,6 @@ public:
     bool alt_is_held() const  { return m_alt_held; }
 
     bool contains(Cursor) const;
-    // assumption: string occupies a single line in TextLines
-    StringSelectionIters ranges_for_string
-        (Cursor, const std::u32string &, const TextLines &) const;
 
     Cursor begin() const;
     Cursor end() const;
@@ -79,20 +63,9 @@ private:
     void constrain_primary_update_alt(const TextLines &);
     bool primary_is_ahead() const;
     bool equal(const UserTextSelection &) const;
+    void verify_text_lines_pointer(const char * caller, TextLines *) const;
 
     bool m_alt_held;
     Cursor m_primary;
     Cursor m_alt;
 };
-
-template <typename Func>
-void UserTextSelection::StringSelectionIters::for_each_iterator_pair
-    (Func && f) const
-{
-    if (m_begin < m_highlight_beg)
-        f(m_begin, m_highlight_beg, HighlightBool::DO_NOT_HIGHLIGHT);
-    if (m_highlight_beg < m_highlight_end)
-        f(m_highlight_beg, m_highlight_end, HighlightBool::HIGHLIGHT);
-    if (m_highlight_end < m_end)
-        f(m_highlight_end, m_end, HighlightBool::DO_NOT_HIGHLIGHT);
-}

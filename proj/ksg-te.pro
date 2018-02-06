@@ -28,17 +28,13 @@ SOURCES += \
     ../src/main.cpp \
     ../src/TextLines.cpp \
     ../src/TextGrid.cpp \
-    \ #../src/TextRenderer.cpp \
     ../src/UserTextSelection.cpp \
-    \ #../src/TextRendererTests.cpp \
     ../src/TargetTextGrid.cpp
 
 HEADERS += \
     ../src/TextLines.hpp \
     ../src/TextGrid.hpp \
-    \ #../src/TextRenderer.hpp \
     ../src/UserTextSelection.hpp \
-    \ #../src/TextRendererTests.hpp \
     ../src/Cursor.hpp \
     ../src/TargetTextGrid.hpp
 

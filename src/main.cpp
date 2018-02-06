@@ -55,11 +55,10 @@ private:
 };
 
 int main() {
-#   if 0//ndef NDEBUG
+#   ifndef NDEBUG
     TextLine::run_tests();
     TextLines::run_tests();
     //UserTextSelection::run_tests();
-
 #   endif
     EditorDialog editor;
     sf::Font font;
@@ -73,12 +72,11 @@ int main() {
     sf::RenderWindow window(sf::VideoMode(editor_width, editor_height),
         "Window Title");
     sf::Clock clock;
-    window.setFramerateLimit(20);
-    bool has_events = true;
+    window.setFramerateLimit(60);
+
     while (window.isOpen()) {
         sf::Event event;
         while (window.pollEvent(event)) {
-            has_events = true;
             editor.process_event(event);
             if (event.type == sf::Event::Closed)
                 window.close();
@@ -187,11 +185,13 @@ void handle_event
             selection->move_right(tlines);
             break;
         case sf::Keyboard::Delete:
-            tlines.delete_ahead(selection->begin());
+            selection->delete_ahead(&tlines);
             break;
         case sf::Keyboard::BackSpace:
-            tlines.delete_behind(selection->begin());
-            selection->move_left(tlines);
+            selection->delete_behind(&tlines);
+            break;
+        case sf::Keyboard::Return:
+            selection->push(&tlines, TextLines::NEW_LINE);
             break;
         default:break;
         }
@@ -199,9 +199,8 @@ void handle_event
     case sf::Event::KeyPressed:
         break;
     case sf::Event::TextEntered:
-        if (event.text.unicode == 8 || event.text.unicode == 127) break;
-        tlines.push(selection->begin(), UChar(event.text.unicode));
-        selection->move_right(tlines);
+        if (event.text.unicode == 8 || event.text.unicode == 127 || event.text.unicode == 13) break;
+        selection->push(&tlines, UChar(event.text.unicode));
         break;
     default: break;
     }

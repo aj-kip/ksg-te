@@ -499,6 +499,7 @@ void TextLine::assign_default_render_options() {
 TextLine TextLine::split(int column) {
     verify_column_number("TextLine::split", column);
     auto new_line = TextLine(m_content.substr(std::size_t(column)));
+    new_line.assign_render_options(*m_rendering_options);
     m_content.erase(m_content.begin() + column, m_content.end());
     new_line.constrain_to_width(recorded_grid_width());
     update_ranges();
@@ -770,7 +771,7 @@ void TextLine::render_to
                     ++word_itr;
                     continue;
                 } else {
-                    assert(!word_itr->contains(*itr));
+                    //assert(!word_itr->contains(*itr));
                     break;
                 }
             }
