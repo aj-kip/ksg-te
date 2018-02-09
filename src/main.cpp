@@ -34,8 +34,20 @@
 #include "TextGrid.hpp"
 #include "UserTextSelection.hpp"
 
+constexpr const auto * const SAMPLE_CODE =
+    U"function do_something(a, b)\n"
+     "    local c = pull(a)\n"
+     "    c[1] = c[1] + a*b\n"
+     "    return c\n"
+     "end\n"
+     "This is a very long line which contains over eighty characters, which is made evident by this very verbose sentence.\n"
+     "abcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrst\n"
+     "last line.";
+
 void handle_event(TextLines *, const sf::Event &);
-void handle_event(UserTextSelection *, TextLines &tlines, const sf::Event &);
+void handle_event(UserTextSelection *, TextLines * tlines, const sf::Event &);
+
+class TextTyperBot;
 
 class EditorDialog final : public ksg::Frame {
 public:
@@ -43,7 +55,7 @@ public:
     ~EditorDialog() override;
     void setup_dialog(const sf::Font &);
     void process_event(const sf::Event &) override;
-    void do_update(float et);
+    void do_update(float et, TextTyperBot &);
 private:
     TextLines m_lines;
 
@@ -54,13 +66,32 @@ private:
     RenderOptions m_render_options;
 };
 
+class TextTyperBot {
+public:
+    enum { HAS_UPDATE, NO_UPDATE };
+    TextTyperBot();
+    decltype (NO_UPDATE) update(TextLines &, UserTextSelection &, double et);
+    TextTyperBot & set_content(const std::u32string &);
+    // chars per second
+    TextTyperBot & set_type_rate(double);
+private:
+    std::u32string m_content;
+    std::size_t m_current_index;
+    double m_type_rate;
+    double m_delay;
+    Cursor m_curent_cursor;
+};
+
 int main() {
 #   ifndef NDEBUG
     TextLine::run_tests();
     TextLines::run_tests();
-    //UserTextSelection::run_tests();
+    UserTextSelection::run_tests();
 #   endif
     EditorDialog editor;
+    TextTyperBot bot;
+    (void)bot.set_content(SAMPLE_CODE).set_type_rate(0.05);
+
     sf::Font font;
     if (!font.loadFromFile("SourceCodePro-Regular.ttf")) {
         throw std::runtime_error("Cannot load font");
@@ -82,7 +113,7 @@ int main() {
                 window.close();
         }
 
-        editor.do_update(clock.getElapsedTime().asSeconds());
+        editor.do_update(clock.getElapsedTime().asSeconds(), bot);
         clock.restart();
         window.clear();
         window.draw(editor);
@@ -97,6 +128,7 @@ void EditorDialog::setup_dialog(const sf::Font & font) {
     auto styles = ksg::construct_system_styles();
     styles[ksg::Frame::GLOBAL_FONT] = ksg::StylesField(&font);
     styles[TextGrid::FONT] = ksg::StylesField(&font);
+#   if 0
     std::u32string sample_code =
         U"function do_something(a, b)\n"
          "    local c = pull(a)\n"
@@ -106,8 +138,8 @@ void EditorDialog::setup_dialog(const sf::Font & font) {
          "This is a very long line which contains over eighty characters, which is made evident by this very verbose sentence.\n"
          "abcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrst\n"
          "last line.";
-
-    m_lines.set_content(sample_code);
+#   endif
+    //m_lines.set_content(SAMPLE_CODE);
     m_grid.set_size_in_characters(80, 30);
     m_render_options.add_keyword(U"function");
     m_render_options.add_keyword(U"local");
@@ -129,7 +161,7 @@ void EditorDialog::setup_dialog(const sf::Font & font) {
 void EditorDialog::process_event(const sf::Event & event) {
     Frame::process_event(event);
     auto old_selection = m_user_selection;
-    handle_event(&m_user_selection, m_lines, event);
+    handle_event(&m_user_selection, &m_lines, event);
     if (old_selection != m_user_selection) {
         m_render_options.set_text_selection(m_user_selection);
         m_render_options.toggle_cursor_flash();
@@ -137,13 +169,49 @@ void EditorDialog::process_event(const sf::Event & event) {
     }
 }
 
-void EditorDialog::do_update(float et) {
+void EditorDialog::do_update(float et, TextTyperBot & bot) {
+    bool requires_rerender = false;
+    requires_rerender = (bot.update(m_lines, m_user_selection, double(et)) == TextTyperBot::HAS_UPDATE);
     m_delay += et;
     if (m_delay > 0.3f) {
         m_delay = 0.f;
         m_render_options.toggle_cursor_flash();
+        requires_rerender |= true;
+    }
+    if (requires_rerender) {
+        m_render_options.set_text_selection(m_user_selection);
         m_lines.render_to(m_grid.as_target_interface(), 0);
     }
+}
+
+TextTyperBot::TextTyperBot():
+    m_current_index(0  ),
+    m_type_rate    (0.0),
+    m_delay        (0.0)
+{}
+decltype (TextTyperBot::NO_UPDATE) TextTyperBot::update
+    (TextLines & lines, UserTextSelection & textsel, double et)
+{
+    if (m_type_rate == 0.0 || m_content.empty()) return NO_UPDATE;
+    m_delay += et;
+    auto rv = NO_UPDATE;
+    while (m_delay > m_type_rate) {
+        textsel.push(&lines, m_content[m_current_index]);
+        rv = HAS_UPDATE;
+        if (++m_current_index == m_content.size())
+            m_content.clear();
+        m_delay -= m_type_rate;
+    }
+    return rv;
+}
+TextTyperBot & TextTyperBot::set_content(const std::u32string & content) {
+    m_content = content;
+    return *this;
+}
+
+TextTyperBot & TextTyperBot::set_type_rate(double rate) {
+    m_type_rate = rate;
+    return *this;
 }
 
 void handle_event(TextLines * text, const sf::Event & event) {
@@ -160,47 +228,50 @@ void handle_event(TextLines * text, const sf::Event & event) {
 }
 
 void handle_event
-    (UserTextSelection * selection, TextLines & tlines,
+    (UserTextSelection * selection, TextLines * tlines,
      const sf::Event & event)
 {
     assert(selection);
+    auto update_hold_alt = [&] () {
+        if (event.key.shift)
+            selection->hold_alt_cursor();
+        else
+            selection->release_alt_cursor();
+    };
     switch (event.type) {
     case sf::Event::KeyReleased:
-        if (event.key.shift) {
-            selection->hold_alt_cursor();
-        } else {
-            selection->release_alt_cursor();
-        }
+        update_hold_alt();
+        break;
+    case sf::Event::KeyPressed:
+        update_hold_alt();
         switch (event.key.code) {
         case sf::Keyboard::Down:
-            selection->move_down(tlines);
+            selection->move_down(*tlines);
             break;
         case sf::Keyboard::Up:
-            selection->move_up(tlines);
+            selection->move_up(*tlines);
             break;
         case sf::Keyboard::Left:
-            selection->move_left(tlines);
+            selection->move_left(*tlines);
             break;
         case sf::Keyboard::Right:
-            selection->move_right(tlines);
+            selection->move_right(*tlines);
             break;
         case sf::Keyboard::Delete:
-            selection->delete_ahead(&tlines);
+            selection->delete_ahead(tlines);
             break;
         case sf::Keyboard::BackSpace:
-            selection->delete_behind(&tlines);
+            selection->delete_behind(tlines);
             break;
         case sf::Keyboard::Return:
-            selection->push(&tlines, TextLines::NEW_LINE);
+            selection->push(tlines, TextLines::NEW_LINE);
             break;
         default:break;
         }
         break;
-    case sf::Event::KeyPressed:
-        break;
     case sf::Event::TextEntered:
         if (event.text.unicode == 8 || event.text.unicode == 127 || event.text.unicode == 13) break;
-        selection->push(&tlines, UChar(event.text.unicode));
+        selection->push(tlines, UChar(event.text.unicode));
         break;
     default: break;
     }

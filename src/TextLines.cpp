@@ -74,7 +74,8 @@ bool is_neither_whitespace_or_operator(UChar uchr)
 } // end of <anonymous> namespace
 
 TextLines::TextLines():
-    m_rendering_options(&default_rendering_options)
+    m_rendering_options(&default_rendering_options),
+    m_width_constraint(std::numeric_limits<int>::max())
 {}
 
 /* explicit */ TextLines::TextLines(const std::u32string & content_):
@@ -83,6 +84,7 @@ TextLines::TextLines():
 
 
 void TextLines::constrain_to_width(int target_width) {
+    m_width_constraint = target_width;
     for (auto & line : m_lines) {
         line.constrain_to_width(target_width);
     }
@@ -122,6 +124,9 @@ Cursor TextLines::push(Cursor cursor, UChar uchar) {
     verify_cursor_validity("TextLines::push", cursor);
     if (cursor == end_cursor()) {
         m_lines.emplace_back();
+        // need to tell the new line a few things
+        m_lines.back().constrain_to_width(m_width_constraint);
+        m_lines.back().assign_render_options(*m_rendering_options);
     }
     auto & line = m_lines[std::size_t(cursor.line)];
     auto resp = line.push(cursor.column, uchar);
@@ -596,7 +601,7 @@ const std::u32string & TextLine::content() const { return m_content; }
 void TextLine::render_to
     (TargetTextGrid & target, int offset, int line_number) const
 {
-
+    if (m_content.empty()) return;
     auto row_begin = m_content.begin();
     auto cur_word_range = m_word_ranges.begin();
     using IterPairIter = IteratorPairCIterator;
@@ -658,6 +663,12 @@ void TextLine::render_to
     TextLine tline(U"0123456789");
     auto other_tline = tline.split(5);
     assert(other_tline.content() == U"56789");
+    }
+    // split on the beginning
+    {
+    TextLine tline(U"0123456789");
+    auto other_tline = tline.split(0);
+    assert(other_tline.content() == U"0123456789");
     }
     // take_contents_of
     {

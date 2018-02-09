@@ -306,10 +306,10 @@ void do_user_text_selection_tests() {
     uts.hold_alt_cursor();
     do_n_times(18 + 31 + 4, [&](){ uts.move_right(test_tlines_c); });
     assert( uts.contains(Cursor(1, 9)));
-    assert( uts.contains(Cursor(3, 3)));
+    assert( uts.contains(Cursor(3, 1)));
     assert( uts.contains(Cursor(2, 3)));
     assert(!uts.contains(Cursor(1, 8)));
-    assert(!uts.contains(Cursor(3, 4)));
+    assert(!uts.contains(Cursor(3, 2)));
     }
 }
 

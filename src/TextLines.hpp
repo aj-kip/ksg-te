@@ -91,6 +91,7 @@ private:
     void verify_cursor_validity(const char * caller, Cursor) const;
     std::vector<TextLine> m_lines;
     const RenderOptions * m_rendering_options;
+    int m_width_constraint;
 };
 
 template <typename IterT>
