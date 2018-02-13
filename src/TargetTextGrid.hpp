@@ -51,6 +51,25 @@ public:
     bool is_valid_cursor(Cursor) const noexcept;
 };
 
+class NullTextGrid final : public TargetTextGrid {
+public:
+    NullTextGrid();
+    int width () const override { return m_width ; }
+    int height() const override { return m_height; }
+    void set_cell(Cursor cursor, UChar, ColorPair) override;
+    void set_width(int w) {
+        verify_dim("NullTextGrid::set_width", w);
+        m_width = w;
+    }
+    void set_height(int h) {
+        verify_dim("NullTextGrid::set_width", h);
+        m_height = h;
+    }
+private:
+    void verify_dim(const char * caller, int) const;
+    int m_width, m_height;
+};
+
 class RenderOptions {
 public:
     static const sf::Color default_keyword_fore_c;

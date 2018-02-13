@@ -32,6 +32,20 @@
 /* static */ const sf::Color RenderOptions::default_back_c =
     sf::Color(12, 12, 12);
 
+NullTextGrid::NullTextGrid(): m_width(1), m_height(1) {}
+
+void NullTextGrid::set_cell(Cursor cursor, UChar, ColorPair) {
+    if (is_valid_cursor(cursor)) return;
+    throw std::invalid_argument
+        ("NullTextGrid::set_cell: attempted to write to an invalid grid position.");
+}
+
+void NullTextGrid::verify_dim(const char * caller, int dim) const {
+    if (dim > 0) return;
+    throw std::invalid_argument(std::string(caller) +
+                                ": dimension must be at least one.");
+}
+
 RenderOptions::RenderOptions():
     m_tab_width(DEFAULT_TAB_WIDTH),
     m_fore_color(sf::Color::White),

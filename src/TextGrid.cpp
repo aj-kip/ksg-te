@@ -174,6 +174,7 @@ Cursor TextGrid::next_cursor(Cursor cur) const {
 /* private */ void TextGrid::verify_cursor_validity
     (const char * caller, Cursor cur) const
 {
-    if (!(cur.column >= m_width) && !(cur.line >= height_in_cells())) return;
+    if (!(cur.column >= m_width) && !(cur.line >= height_in_cells()) &&
+        !(cur.column < 0       ) && !(cur.line < 0                )) return;
     throw std::out_of_range(std::string(caller) + ": cursor is out of range.");
 }

@@ -24,12 +24,14 @@
 
 #include <vector>
 #include <set>
+#include <fstream>
 
 #include <ksg/Widget.hpp>
 #include <ksg/Frame.hpp>
 
 #include <cassert>
 
+#include "TextLine.hpp"
 #include "TextLines.hpp"
 #include "TextGrid.hpp"
 #include "UserTextSelection.hpp"
@@ -40,13 +42,20 @@ constexpr const auto * const SAMPLE_CODE =
      "    c[1] = c[1] + a*b\n"
      "    return c\n"
      "end\n"
-     "This is a very long line which contains over eighty characters, which is made evident by this very verbose sentence.\n"
-     "abcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrst\n"
-     "last line.";
+     "local function make_vector()\n"
+     "    local self = { x = 0, y = 0 }\n"
+     "    -- contextual highlight? make magnitude a function's color?\n"
+     "    -- to do this automatically, I would need something that parses Lua\n"
+     "    self.magnitude = function()\n"
+     "        return math.sqrt(self.x*self.x + self.y*self.y)\n"
+     "    end\n"
+     "    return self\n"
+     "end";
 
 void handle_event(TextLines *, const sf::Event &);
 void handle_event(UserTextSelection *, TextLines * tlines, const sf::Event &);
-
+std::u32string load_ascii_textfile(const char * filename);
+int bottom_offset(const TextLines &, const TextGrid &);
 class TextTyperBot;
 
 class EditorDialog final : public ksg::Frame {
@@ -90,7 +99,7 @@ int main() {
 #   endif
     EditorDialog editor;
     TextTyperBot bot;
-    (void)bot.set_content(SAMPLE_CODE).set_type_rate(0.05);
+    (void)bot.set_content(load_ascii_textfile("vector.lua")).set_type_rate(0.05);
 
     sf::Font font;
     if (!font.loadFromFile("SourceCodePro-Regular.ttf")) {
@@ -128,32 +137,27 @@ void EditorDialog::setup_dialog(const sf::Font & font) {
     auto styles = ksg::construct_system_styles();
     styles[ksg::Frame::GLOBAL_FONT] = ksg::StylesField(&font);
     styles[TextGrid::FONT] = ksg::StylesField(&font);
-#   if 0
-    std::u32string sample_code =
-        U"function do_something(a, b)\n"
-         "    local c = pull(a)\n"
-         "    c[1] = c[1] + a*b\n"
-         "    return c\n"
-         "end\n"
-         "This is a very long line which contains over eighty characters, which is made evident by this very verbose sentence.\n"
-         "abcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrstabcdefghijklmnopqrst\n"
-         "last line.";
-#   endif
-    //m_lines.set_content(SAMPLE_CODE);
+
     m_grid.set_size_in_characters(80, 30);
-    m_render_options.add_keyword(U"function");
-    m_render_options.add_keyword(U"local");
-    m_render_options.add_keyword(U"return");
-    m_render_options.add_keyword(U"end");
+    auto lua_keywords = {
+        U"and"   ,    U"break" ,    U"do"  ,      U"else"    ,  U"elseif",
+        U"end"   ,    U"false" ,    U"for" ,      U"function",  U"if"    ,
+        U"in"    ,    U"local" ,    U"nil" ,      U"not"     ,  U"or"    ,
+        U"repeat",    U"return",    U"then",      U"true"    ,  U"until" ,
+        U"while"
+    };
+    for (auto keyword : lua_keywords)
+        m_render_options.add_keyword(keyword);
     m_lines.constrain_to_width(m_grid.width_in_cells());
     m_lines.assign_render_options(m_render_options);
 
     m_grid.assign_font(font);
     m_render_options.set_text_selection(m_user_selection);
 
-    m_lines.render_to(m_grid.as_target_interface(), 0);
+    m_lines.render_to(m_grid.as_target_interface(), bottom_offset(m_lines,  m_grid));
 
     add_widget(&m_grid);
+    set_title_visible(false);
     set_style(styles);
     update_geometry();
 }
@@ -165,7 +169,7 @@ void EditorDialog::process_event(const sf::Event & event) {
     if (old_selection != m_user_selection) {
         m_render_options.set_text_selection(m_user_selection);
         m_render_options.toggle_cursor_flash();
-        m_lines.render_to(m_grid.as_target_interface(), 0);
+        m_lines.render_to(m_grid.as_target_interface(), bottom_offset(m_lines,  m_grid));
     }
 }
 
@@ -180,7 +184,7 @@ void EditorDialog::do_update(float et, TextTyperBot & bot) {
     }
     if (requires_rerender) {
         m_render_options.set_text_selection(m_user_selection);
-        m_lines.render_to(m_grid.as_target_interface(), 0);
+        m_lines.render_to(m_grid.as_target_interface(), bottom_offset(m_lines,  m_grid));
     }
 }
 
@@ -192,15 +196,17 @@ TextTyperBot::TextTyperBot():
 decltype (TextTyperBot::NO_UPDATE) TextTyperBot::update
     (TextLines & lines, UserTextSelection & textsel, double et)
 {
+    //return NO_UPDATE;
     if (m_type_rate == 0.0 || m_content.empty()) return NO_UPDATE;
     m_delay += et;
     auto rv = NO_UPDATE;
-    while (m_delay > m_type_rate) {
+    while (true || (m_delay > m_type_rate)) {
         textsel.push(&lines, m_content[m_current_index]);
         rv = HAS_UPDATE;
         if (++m_current_index == m_content.size())
             m_content.clear();
         m_delay -= m_type_rate;
+        return rv;
     }
     return rv;
 }
@@ -275,4 +281,28 @@ void handle_event
         break;
     default: break;
     }
+}
+
+std::u32string load_ascii_textfile(const char * filename) {
+    std::ifstream fin(filename);
+    auto fbeg = fin.tellg();
+    fin.seekg(fin.end);
+    auto fend = fin.tellg();
+    auto length = fend - fbeg;
+    std::u32string content;
+    content.reserve(std::size_t(length));
+    while (fin) {
+        char c;
+        fin.read(&c, 1);
+        content.push_back(UChar(c));
+    }
+    return content;
+}
+
+int bottom_offset(const TextLines & textlines, const TextGrid & text_grid) {
+    int height_so_far = 0;
+    for (const auto & line : textlines.lines()) {
+        height_so_far += line.height_in_cells();
+    }
+    return -std::max(0, height_so_far - text_grid.height_in_cells());
 }

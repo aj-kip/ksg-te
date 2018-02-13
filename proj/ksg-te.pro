@@ -27,12 +27,14 @@ debug {
 SOURCES += \
     ../src/main.cpp \
     ../src/TextLines.cpp \
+    ../src/TextLine.cpp \
     ../src/TextGrid.cpp \
     ../src/UserTextSelection.cpp \
     ../src/TargetTextGrid.cpp
 
 HEADERS += \
     ../src/TextLines.hpp \
+    ../src/TextLine.hpp \
     ../src/TextGrid.hpp \
     ../src/UserTextSelection.hpp \
     ../src/Cursor.hpp \
