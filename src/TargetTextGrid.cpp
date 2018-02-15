@@ -46,6 +46,11 @@ void NullTextGrid::verify_dim(const char * caller, int dim) const {
                                 ": dimension must be at least one.");
 }
 
+/* static */ const RenderOptions & RenderOptions::get_default_instance() {
+    static RenderOptions instance;
+    return instance;
+}
+
 RenderOptions::RenderOptions():
     m_tab_width(DEFAULT_TAB_WIDTH),
     m_fore_color(sf::Color::White),
@@ -152,3 +157,83 @@ bool TargetTextGrid::is_valid_cursor(Cursor cursor) const noexcept {
     return cursor.line < end_c.line && cursor.column < width();
 }
 
+SubTextGrid TargetTextGrid::make_sub_grid
+    (Cursor cursor, int width, int height)
+{ return SubTextGrid(this, cursor, width, height); }
+
+// ----------------------------------------------------------------------------
+
+namespace {
+
+TargetTextGrid * verify_parent(TargetTextGrid * ptr);
+
+Cursor verify_cursor(Cursor cursor, TargetTextGrid * parent);
+
+int verify_valid_dim(int dim, int max, const char * dim_name);
+
+} // end of <anonymous> namespace
+
+SubTextGrid::SubTextGrid():
+    m_parent(nullptr),
+    m_width (REST_OF_GRID),
+    m_height(REST_OF_GRID)
+{}
+
+// members are initialized in order of appearence in source
+SubTextGrid::SubTextGrid
+    (TargetTextGrid * parent, Cursor cursor, int width, int height):
+    m_parent(verify_parent(parent)),
+    m_offset(verify_cursor(cursor, parent)),
+    m_width (verify_valid_dim(width , parent->width (), "width" )),
+    m_height(verify_valid_dim(height, parent->height(), "height"))
+{
+    if (width  == REST_OF_GRID) m_width  = parent->width () - m_offset.column;
+    if (height == REST_OF_GRID) m_height = parent->height() - m_offset.line  ;
+}
+
+int SubTextGrid::width () const { return m_width ; }
+
+int SubTextGrid::height() const { return m_height; }
+
+void SubTextGrid::set_cell(Cursor cursor, UChar uchr, ColorPair pair) {
+    // lol how?!
+    if (m_parent) {
+        Cursor adjusted(cursor.line + m_offset.line, cursor.column + m_offset.column);
+        m_parent->set_cell(adjusted, uchr, pair);
+        return;
+    }
+    throw std::invalid_argument("SubTextGrid::set_cell: parent pointer "
+                                "must point to a target text grid.");
+
+}
+
+namespace {
+
+TargetTextGrid * verify_parent(TargetTextGrid * ptr) {
+    if (ptr) return ptr;
+    throw std::invalid_argument("SubTextGrid::SubTextGrid: parent pointer "
+                                "must point to a target text grid.");
+}
+
+Cursor verify_cursor(Cursor cursor, TargetTextGrid * parent) {
+    assert(parent);
+    if (parent->is_valid_cursor(cursor)) return cursor;
+    throw std::invalid_argument("SubTextGrid::SubTextGrid: offset cursor "
+                                "must be inside the parent grid.");
+}
+
+int verify_valid_dim(int dim, int max, const char * dim_name) {
+    if (dim == SubTextGrid::REST_OF_GRID) return dim;
+    if (dim > 0) return dim;
+    if (dim > max) {
+        throw std::invalid_argument
+            ("SubTextGrid::SubTextGrid: " + std::string(dim_name) + " "
+             "may not exceed the " + std::string(dim_name) + " of the parent.");
+    }
+    assert(dim < 1);
+    throw std::invalid_argument
+        ("SubTextGrid::SubTextGrid: " + std::string(dim_name) + " "
+         "must be a positive integer or REST_OF_GRID sentinel.");
+}
+
+} // end of <anonymous> namespace

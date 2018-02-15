@@ -55,8 +55,14 @@ constexpr const auto * const SAMPLE_CODE =
 void handle_event(TextLines *, const sf::Event &);
 void handle_event(UserTextSelection *, TextLines * tlines, const sf::Event &);
 std::u32string load_ascii_textfile(const char * filename);
-int bottom_offset(const TextLines &, const TextGrid &);
+int bottom_offset(const TextLines &, const TargetTextGrid &);
 class TextTyperBot;
+
+std::u32string expand_char_width(const std::string & str) {
+    std::u32string rv;
+    for (auto c : str) rv += UChar(c);
+    return rv;
+}
 
 class EditorDialog final : public ksg::Frame {
 public:
@@ -69,6 +75,9 @@ private:
     TextLines m_lines;
 
     TextGrid m_grid;
+    std::unique_ptr<TextGrid::TargetInterface> m_interface;
+    SubTextGrid m_elapsed_time_grid;
+    SubTextGrid m_doc;
     float m_delay;
     Cursor m_cursor;
     UserTextSelection m_user_selection;
@@ -99,7 +108,7 @@ int main() {
 #   endif
     EditorDialog editor;
     TextTyperBot bot;
-    (void)bot.set_content(load_ascii_textfile("vector.lua")).set_type_rate(0.05);
+    (void)bot.set_content(load_ascii_textfile("vector.lua")).set_type_rate(0.015);
 
     sf::Font font;
     if (!font.loadFromFile("SourceCodePro-Regular.ttf")) {
@@ -154,9 +163,15 @@ void EditorDialog::setup_dialog(const sf::Font & font) {
     m_grid.assign_font(font);
     m_render_options.set_text_selection(m_user_selection);
 
-    m_lines.render_to(m_grid.as_target_interface(), bottom_offset(m_lines,  m_grid));
+
 
     add_widget(&m_grid);
+    m_interface.reset(new TextGrid::TargetInterface(m_grid));
+
+    m_elapsed_time_grid = m_interface->make_sub_grid(Cursor(0, 0), SubTextGrid::REST_OF_GRID, 1);
+    m_doc = m_interface->make_sub_grid(Cursor(1, 0));
+
+    m_lines.render_to(m_doc, bottom_offset(m_lines,  m_doc));
     set_title_visible(false);
     set_style(styles);
     update_geometry();
@@ -169,7 +184,7 @@ void EditorDialog::process_event(const sf::Event & event) {
     if (old_selection != m_user_selection) {
         m_render_options.set_text_selection(m_user_selection);
         m_render_options.toggle_cursor_flash();
-        m_lines.render_to(m_grid.as_target_interface(), bottom_offset(m_lines,  m_grid));
+        m_lines.render_to(m_doc, bottom_offset(m_lines,  m_doc));
     }
 }
 
@@ -177,15 +192,22 @@ void EditorDialog::do_update(float et, TextTyperBot & bot) {
     bool requires_rerender = false;
     requires_rerender = (bot.update(m_lines, m_user_selection, double(et)) == TextTyperBot::HAS_UPDATE);
     m_delay += et;
+
+    {
+    TextLine tline(expand_char_width(std::to_string(et)));
+    tline.constrain_to_width(m_elapsed_time_grid.width());
+    tline.render_to(m_elapsed_time_grid, 0, 0);
+    }
+
     if (m_delay > 0.3f) {
         m_delay = 0.f;
         m_render_options.toggle_cursor_flash();
         requires_rerender |= true;
     }
-    if (requires_rerender) {
+    //if (requires_rerender) {
         m_render_options.set_text_selection(m_user_selection);
-        m_lines.render_to(m_grid.as_target_interface(), bottom_offset(m_lines,  m_grid));
-    }
+        m_lines.render_to(m_doc, bottom_offset(m_lines,  m_doc));
+    //}
 }
 
 TextTyperBot::TextTyperBot():
@@ -196,11 +218,10 @@ TextTyperBot::TextTyperBot():
 decltype (TextTyperBot::NO_UPDATE) TextTyperBot::update
     (TextLines & lines, UserTextSelection & textsel, double et)
 {
-    //return NO_UPDATE;
     if (m_type_rate == 0.0 || m_content.empty()) return NO_UPDATE;
     m_delay += et;
     auto rv = NO_UPDATE;
-    while (true || (m_delay > m_type_rate)) {
+    while (m_delay > m_type_rate) {
         textsel.push(&lines, m_content[m_current_index]);
         rv = HAS_UPDATE;
         if (++m_current_index == m_content.size())
@@ -299,10 +320,10 @@ std::u32string load_ascii_textfile(const char * filename) {
     return content;
 }
 
-int bottom_offset(const TextLines & textlines, const TextGrid & text_grid) {
+int bottom_offset(const TextLines & textlines, const TargetTextGrid & text_grid) {
     int height_so_far = 0;
     for (const auto & line : textlines.lines()) {
         height_so_far += line.height_in_cells();
     }
-    return -std::max(0, height_so_far - text_grid.height_in_cells());
+    return -std::max(0, height_so_far - text_grid.height());
 }

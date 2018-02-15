@@ -27,17 +27,8 @@
 
 namespace {
 
-const static auto default_rendering_options = RenderOptions();
 using UStringCIter = TextLines::UStringCIter;
 
-#if 0
-std::ostream & print_word_range(const ConstIteratorPair<std::u32string::const_iterator> & pair) {
-    for (auto itr = pair.begin; itr != pair.end; ++itr) {
-        std::cout << char((*itr) & 0x7F);
-    }
-    return std::cout;
-}
-#endif
 TextLine::IteratorPair progress_through_line
     (TextLine::IteratorPair, UStringCIter end, const RenderOptions &,
      int max_width, int working_width);
@@ -55,18 +46,16 @@ bool is_neither_whitespace_or_operator(UChar uchr)
 
 void run_text_line_tests();
 
-} // end of <anonymous> namespace
-
-namespace {
-
 void verify_text_line_content_string(const char * caller, const std::u32string &);
 
 } // end of <anonymous> namespace
 
+TextBreaker::~TextBreaker() {}
+
 TextLine::TextLine():
     m_grid_width(std::numeric_limits<int>::max()),
     m_extra_end_space(0),
-    m_rendering_options(&default_rendering_options)
+    m_rendering_options(&RenderOptions::get_default_instance())
 {
     check_invarients();
 }
@@ -89,7 +78,7 @@ TextLine::TextLine(TextLine && rhs):
     m_grid_width(std::numeric_limits<int>::max()),
     m_extra_end_space(0),
     m_content(content_),
-    m_rendering_options(&default_rendering_options)
+    m_rendering_options(&RenderOptions::get_default_instance())
 {
     verify_text_line_content_string("TextLine::TextLine", content_);
     update_ranges();
@@ -133,7 +122,7 @@ void TextLine::assign_render_options(const RenderOptions & options) {
 }
 
 void TextLine::assign_default_render_options() {
-    assign_render_options(default_rendering_options);
+    assign_render_options(RenderOptions::get_default_instance());
 }
 
 TextLine TextLine::split(int column) {
@@ -292,9 +281,10 @@ void TextLine::render_to
 }
 
 /* private */ void TextLine::update_ranges() {
-    if (m_content.empty()) return;
     m_word_ranges.clear();
     m_row_ranges.clear();
+    if (m_content.empty()) return;
+
     // this part is hard...
     // I need actual iterators, since I'm recording them
     IteratorPair ip(m_content.begin(), m_content.begin());
@@ -391,7 +381,11 @@ void TextLine::render_to
 /* private */ void TextLine::check_invarients() const {
     assert(m_rendering_options);
     assert(m_extra_end_space == 0 || m_extra_end_space == 1);
-    if (m_content.empty()) return;
+    if (m_content.empty()) {
+        assert(m_row_ranges .empty());
+        assert(m_word_ranges.empty());
+        return;
+    }
     if (!m_row_ranges.empty()) {
         auto last = m_row_ranges.front();
         auto itr  = m_row_ranges.begin() + 1;
@@ -428,44 +422,31 @@ void TextLine::render_to
 
 namespace {
 
+class DefaultBreaker final : public TextBreaker {
+public:
+    Response next_sequence(UStringCIter beg) override;
+};
+
 TextLine::IteratorPair progress_through_line
     (TextLine::IteratorPair pos, std::u32string::const_iterator end,
-     const RenderOptions & options, int max_width, int working_width)
+     const RenderOptions &, int max_width, int working_width)
 {
+    DefaultBreaker breaker;
     // the process of interpreting the meaning of the rv is not trivial
     using IteratorPair = TextLine::IteratorPair;
     // we should never encounter NEW_LINE!
-    if (pos.begin == end) return pos;
-    if (pos.end   == end) return IteratorPair(end, end);
+    if (pos.begin == end || pos.end == end)
+        return IteratorPair(end, end);
 
-    bool (*classifier_func)(UChar) = nullptr;
-    auto check_and_set_classifier =
-        [&classifier_func] (UChar u, bool (*f)(UChar))
-    {
-        if (!f(u)) return;
-        assert(!classifier_func);
-        classifier_func = f;
-    };
+    auto resp = breaker.next_sequence(pos.end);
+    auto next = resp.next;
+    if (next == pos.end) return IteratorPair(end, end);
 
-    auto new_end = pos.end;
-    check_and_set_classifier(*new_end, is_whitespace                    );
-    check_and_set_classifier(*new_end, is_operator                      );
-    check_and_set_classifier(*new_end, is_neither_whitespace_or_operator);
-    assert(classifier_func);
-    int space_required = 0;
-    while (new_end != end && classifier_func(*new_end)) {
-        if (*new_end == U'\t')
-            space_required += options.tab_width();
-        else
-            ++space_required;
-        ++new_end;
-    }
-    TextLine::IteratorPair rv(pos.end, new_end);
+    TextLine::IteratorPair rv(pos.end, next);
     auto seq_length = rv.end - rv.begin;
-    static constexpr bool (* const is_whitespace_c)(UChar) = is_whitespace;
     if (seq_length > working_width && seq_length <= max_width) {
         // whitespace is the exception, it does NOT wrap
-        if (classifier_func == is_whitespace_c) {
+        if (resp.is_whitespace) {//if (classifier_func == is_whitespace_c) {
             return IteratorPair(rv.begin, rv.begin + working_width);
         } else {
             // soft wrap, "ask" for a reset of working space
@@ -563,6 +544,28 @@ void run_text_line_tests() {
     }
     tline.render_to(ntg, 0, 0);
     }
+}
+
+DefaultBreaker::Response DefaultBreaker::next_sequence(UStringCIter beg) {
+    bool (*classifier_func)(UChar) = nullptr;
+    auto check_and_set_classifier =
+        [&classifier_func] (UChar u, bool (*f)(UChar))
+    {
+        if (!f(u)) return;
+        assert(!classifier_func);
+        classifier_func = f;
+    };
+
+    check_and_set_classifier(*beg, is_whitespace                    );
+    check_and_set_classifier(*beg, is_operator                      );
+    check_and_set_classifier(*beg, is_neither_whitespace_or_operator);
+    assert(classifier_func);
+
+    while (*beg != 0 && classifier_func(*beg)) {
+        ++beg;
+    }
+    static constexpr bool (* const is_whitespace_c)(UChar) = is_whitespace;
+    return Response { beg, is_whitespace_c == classifier_func };
 }
 
 } // end of <anonymous> namespace

@@ -23,6 +23,8 @@
 #include <string>
 #include <stdexcept>
 
+#include <common/MultiType.hpp>
+
 #include "Cursor.hpp"
 #include "TargetTextGrid.hpp"
 
@@ -34,9 +36,7 @@ public:
     using ValueType = decltype (*IterT());
     using IteratorType = IterT;
     ConstIteratorPair() {}
-    ConstIteratorPair(IteratorType beg_, IteratorType end_):
-        begin(beg_), end(end_)
-    { if (!(beg_ <= end_)) throw std::invalid_argument("ConstIteratorPair::ConstIteratorPair: beg must be equal to or less than end."); }
+    ConstIteratorPair(IteratorType beg_, IteratorType end_);
     /** @warning Assumes that itr is from the same container as begin and end.
      */
     bool contains(IteratorType itr) const noexcept
@@ -48,6 +48,16 @@ public:
     bool is_behind(const ConstIteratorPair & pair) const noexcept
         { return end <= pair.begin; }
     IteratorType begin, end;
+};
+
+struct TextBreaker {
+    using UStringCIter = std::u32string::const_iterator;
+    virtual ~TextBreaker();
+    struct Response {
+        UStringCIter next;
+        bool is_whitespace;
+    };
+    virtual Response next_sequence(UStringCIter beg) = 0;
 };
 
 // content string + extra ending space
@@ -135,3 +145,13 @@ private:
     std::u32string m_content;
     const RenderOptions * m_rendering_options;
 };
+
+template <typename IterT>
+ConstIteratorPair<IterT>::ConstIteratorPair
+    (IteratorType beg_, IteratorType end_):
+    begin(beg_), end(end_)
+{
+    if (beg_ <= end_) return;
+    throw std::invalid_argument("ConstIteratorPair::ConstIteratorPair: beg "
+                                "must be equal to or less than end.");
+}

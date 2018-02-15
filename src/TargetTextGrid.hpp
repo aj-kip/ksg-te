@@ -40,8 +40,12 @@ inline ColorPair apply_to
     (const ColorPair & pair)
     { return ColorPair(transform(pair.fore), transform(pair.back)); }
 
+class SubTextGrid;
 class TargetTextGrid {
 public:
+    static constexpr const int REST_OF_GRID = -1;
+    TargetTextGrid() {}
+    TargetTextGrid(const TargetTextGrid &) = default;
     virtual ~TargetTextGrid();
     virtual int width () const = 0;
     virtual int height() const = 0;
@@ -49,6 +53,24 @@ public:
     Cursor next_cursor(Cursor) const;
     Cursor end_cursor() const;
     bool is_valid_cursor(Cursor) const noexcept;
+    SubTextGrid make_sub_grid(Cursor, int width = REST_OF_GRID,
+                              int height = REST_OF_GRID);
+};
+
+class SubTextGrid final : public TargetTextGrid {
+public:
+    SubTextGrid();
+    SubTextGrid(TargetTextGrid * parent, Cursor,
+                int width = REST_OF_GRID, int height = REST_OF_GRID);
+    int width () const override;
+    int height() const override;
+    void set_cell(Cursor, UChar, ColorPair) override;
+private:
+    // order dependant
+    TargetTextGrid * m_parent;
+    Cursor m_offset;
+    int m_width;
+    int m_height;
 };
 
 class NullTextGrid final : public TargetTextGrid {
@@ -78,6 +100,9 @@ public:
     static constexpr const int DEFAULT_TAB_WIDTH = 4;
     using ColorPairTransformFunc = ColorPair (*)(ColorPair);
     enum { DEFAULT_PAIR, KEYWORD_PAIR };
+
+    static const RenderOptions & get_default_instance();
+
     RenderOptions();
     void add_keyword(const std::u32string &);
     void set_color_pair_option(decltype(DEFAULT_PAIR), ColorPair);
@@ -87,7 +112,6 @@ public:
     int tab_width() const;
 
     void set_text_selection(const UserTextSelection &);
-    //const UserTextSelection & text_selection() const;
 
     void set_cursor_flash_off();
     void toggle_cursor_flash();

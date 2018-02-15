@@ -30,17 +30,17 @@
 
 namespace {
 
-const static auto default_rendering_options = RenderOptions();
+void do_text_lines_unit_tests();
 
-}
+} // end of <anonymous> namespace
 
 TextLines::TextLines():
-    m_rendering_options(&default_rendering_options),
+    m_rendering_options(&RenderOptions::get_default_instance()),
     m_width_constraint(std::numeric_limits<int>::max())
 {}
 
 /* explicit */ TextLines::TextLines(const std::u32string & content_):
-    m_rendering_options(&default_rendering_options)
+    m_rendering_options(&RenderOptions::get_default_instance())
 { set_content(content_); }
 
 
@@ -78,10 +78,19 @@ void TextLines::assign_render_options(const RenderOptions & options) {
 }
 
 void TextLines::assign_default_render_options() {
-    assign_render_options(default_rendering_options);
+    assign_render_options(RenderOptions::get_default_instance());
 }
 
 Cursor TextLines::push(Cursor cursor, UChar uchar) {
+    auto try_it = [this]() {
+        if (m_width_constraint == std::numeric_limits<decltype (m_width_constraint)>::max()) {
+            return;
+        }
+        NullTextGrid ntg;
+        ntg.set_width(m_width_constraint);
+        ntg.set_height(30);
+        render_to(ntg, 0);
+    };
     verify_cursor_validity("TextLines::push", cursor);
     if (cursor == end_cursor()) {
         m_lines.emplace_back();
@@ -93,8 +102,10 @@ Cursor TextLines::push(Cursor cursor, UChar uchar) {
     auto resp = line.push(cursor.column, uchar);
     if (resp == TextLine::SPLIT_REQUESTED) {
         // if split is requested, the line has not been modified
-        m_lines.insert
-            (m_lines.begin() + cursor.line + 1, line.split(cursor.column));
+        auto spl = line.split(cursor.column);
+        try_it();
+        m_lines.insert(m_lines.begin() + cursor.line + 1, spl);
+        try_it();
         ++cursor.line;
         cursor.column = 0;
         return cursor;
@@ -229,6 +240,7 @@ Cursor TextLines::previous_cursor(Cursor cursor) const {
 
 Cursor TextLines::constrain_cursor(Cursor cursor) const noexcept {
     if (cursor == end_cursor()) return cursor;
+    if (m_lines.empty()) return end_cursor();
     if (cursor.line < 0) {
         cursor.line = 0;
     } else if (!m_lines.empty() && cursor.line >= int(m_lines.size())) {
@@ -273,6 +285,39 @@ void TextLines::render_to(TargetTextGrid & target, int offset) const {
 }
 
 /* static */ void TextLines::run_tests() {
+    do_text_lines_unit_tests();
+}
+
+template <typename Func>
+/* private */ void TextLines::for_each_line_in_range
+    (Cursor beg, Cursor end, Func && func) const
+{
+    assert(is_valid_cursor(beg));
+    assert(is_valid_cursor(end));
+    while (beg.line <= end.line && beg.line < int(m_lines.size())) {
+        const auto & line = m_lines[std::size_t(beg.line)];
+        int line_beg = beg.column;
+        int line_end = beg.line == end.line ? end.column : line.content_length();
+        func(beg.line, line_beg, line_end);
+        beg.column = 0;
+        ++beg.line;
+    }
+}
+
+/* private */ void TextLines::check_invarients() const {
+}
+
+/* private */ void TextLines::verify_cursor_validity
+    (const char * caller, Cursor cursor) const
+{
+    if (is_valid_cursor(cursor)) return;
+    throw std::invalid_argument
+        (std::string(caller) + ": given cursor is invalid.");
+}
+
+namespace {
+
+void do_text_lines_unit_tests() {
     // push features
     auto push_string =
         [](TextLines * lines, const UChar * const str, Cursor cur)
@@ -377,36 +422,28 @@ void TextLines::render_to(TargetTextGrid & target, int offset) const {
     auto ustr = tlines.copy_characters_from(Cursor(0, 0), tlines.end_cursor());
     assert(ustr == utext);
     }
-}
+    {
+    NullTextGrid ntg;
+    TextLines tlines;
+    UserTextSelection uts;
 
-template <typename Func>
-/* private */ void TextLines::for_each_line_in_range
-    (Cursor beg, Cursor end, Func && func) const
-{
-    assert(is_valid_cursor(beg));
-    assert(is_valid_cursor(end));
-    while (beg.line <= end.line && beg.line < int(m_lines.size())) {
-        const auto & line = m_lines[std::size_t(beg.line)];
-        int line_beg = beg.column;
-        int line_end = beg.line == end.line ? end.column : line.content_length();
-        func(beg.line, line_beg, line_end);
-        beg.column = 0;
-        ++beg.line;
+    ntg.set_width(80);
+    ntg.set_height(5);
+    tlines.constrain_to_width(ntg.width());
+    for (auto c : U"abc\ndef") {
+        if (c == 0) continue;
+        uts.push(&tlines, c);
+    }
+    for (int i = 0; i != 3; ++i)
+        uts.move_left(tlines);
+    // don't break invarients!
+    uts.push(&tlines, TextLines::NEW_LINE);
+    tlines.render_to(ntg, 0);
+    }
+    {
+    TextLines tlines;
+    assert(tlines.constrain_cursor(Cursor(10, 10)) == tlines.end_cursor());
     }
 }
 
-/* private */ void TextLines::check_invarients() const {
-}
-
-/* private */ void TextLines::verify_cursor_validity
-    (const char * caller, Cursor cursor) const
-{
-    if (is_valid_cursor(cursor)) return;
-    throw std::invalid_argument
-        (std::string(caller) + ": given cursor is invalid.");
-}
-
-//
-// ----------------------------------------------------------------------------
-//
-
+} // end of <anonymous> namespace

@@ -16,13 +16,17 @@ linux {
     }
 }
 
-debug {
-    TARGET  = ksg-te-d
-    LIBS   += -lcommon-d -lksg-d
-} else:release {
+release {
     TARGET  = ksg-te
     #LIBS   += -lcommon -lksg
 }
+
+debug {
+    TARGET  = ksg-te-d
+    LIBS   += -lcommon-d -lksg-d
+}
+
+message($$CONFIG)
 
 SOURCES += \
     ../src/main.cpp \
