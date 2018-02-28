@@ -33,7 +33,7 @@
 
 #include "TextLine.hpp"
 #include "TextLines.hpp"
-#include "TextGrid.hpp"
+#include "KsgTextGrid.hpp"
 #include "UserTextSelection.hpp"
 
 constexpr const auto * const SAMPLE_CODE =
@@ -74,8 +74,8 @@ public:
 private:
     TextLines m_lines;
 
-    TextGrid m_grid;
-    std::unique_ptr<TextGrid::TargetInterface> m_interface;
+    KsgTextGrid m_grid;
+    std::unique_ptr<KsgTextGrid::TargetInterface> m_interface;
     SubTextGrid m_elapsed_time_grid;
     SubTextGrid m_doc;
     float m_delay;
@@ -101,14 +101,18 @@ private:
 };
 
 int main() {
-#   ifndef NDEBUG
+#   if 0//ndef NDEBUG
     TextLine::run_tests();
     TextLines::run_tests();
     UserTextSelection::run_tests();
 #   endif
+    {
+    TextLine tline;
+    tline.push(0, U'[');
+    }
     EditorDialog editor;
     TextTyperBot bot;
-    (void)bot.set_content(load_ascii_textfile("vector.lua")).set_type_rate(0.015);
+    //(void)bot.set_content(load_ascii_textfile("vector.lua")).set_type_rate(0.0075);
 
     sf::Font font;
     if (!font.loadFromFile("SourceCodePro-Regular.ttf")) {
@@ -145,7 +149,7 @@ EditorDialog::~EditorDialog() {}
 void EditorDialog::setup_dialog(const sf::Font & font) {
     auto styles = ksg::construct_system_styles();
     styles[ksg::Frame::GLOBAL_FONT] = ksg::StylesField(&font);
-    styles[TextGrid::FONT] = ksg::StylesField(&font);
+    styles[KsgTextGrid::FONT] = ksg::StylesField(&font);
 
     m_grid.set_size_in_characters(80, 30);
     auto lua_keywords = {
@@ -166,7 +170,7 @@ void EditorDialog::setup_dialog(const sf::Font & font) {
 
 
     add_widget(&m_grid);
-    m_interface.reset(new TextGrid::TargetInterface(m_grid));
+    m_interface.reset(new KsgTextGrid::TargetInterface(m_grid));
 
     m_elapsed_time_grid = m_interface->make_sub_grid(Cursor(0, 0), SubTextGrid::REST_OF_GRID, 1);
     m_doc = m_interface->make_sub_grid(Cursor(1, 0));
@@ -196,7 +200,7 @@ void EditorDialog::do_update(float et, TextTyperBot & bot) {
     {
     TextLine tline(expand_char_width(std::to_string(et)));
     tline.constrain_to_width(m_elapsed_time_grid.width());
-    tline.render_to(m_elapsed_time_grid, 0, 0);
+    tline.render_to(m_elapsed_time_grid, 0);
     }
 
     if (m_delay > 0.3f) {
@@ -224,10 +228,11 @@ decltype (TextTyperBot::NO_UPDATE) TextTyperBot::update
     while (m_delay > m_type_rate) {
         textsel.push(&lines, m_content[m_current_index]);
         rv = HAS_UPDATE;
-        if (++m_current_index == m_content.size())
+        if (++m_current_index == m_content.size()) {
             m_content.clear();
+            break;
+        }
         m_delay -= m_type_rate;
-        return rv;
     }
     return rv;
 }

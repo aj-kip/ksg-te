@@ -19,15 +19,15 @@
 
 *****************************************************************************/
 
-#include "TextGrid.hpp"
+#include "KsgTextGrid.hpp"
 
 #include <SFML/Graphics/RenderTarget.hpp>
 
 #include <cassert>
 
-TextGrid::TargetInterface::~TargetInterface() {}
+KsgTextGrid::TargetInterface::~TargetInterface() {}
 
-TextGrid::TextGrid():
+KsgTextGrid::KsgTextGrid():
     m_font(nullptr),
     m_cell_width(0.f),
     m_cell_height(0.f),
@@ -35,11 +35,11 @@ TextGrid::TextGrid():
     m_char_size(0)
 {}
 
-TextGrid::~TextGrid() {}
+KsgTextGrid::~KsgTextGrid() {}
 
-void TextGrid::process_event(const sf::Event &) {}
+void KsgTextGrid::process_event(const sf::Event &) {}
 
-void TextGrid::set_location(float x, float y) {
+void KsgTextGrid::set_location(float x, float y) {
     m_location = VectorF(x, y);
     for (auto cur = Cursor(0, 0); cur != end_cursor(); cur = next_cursor(cur)) {
         auto & cell = m_cells[cursor_to_cell(cur)];
@@ -52,23 +52,23 @@ void TextGrid::set_location(float x, float y) {
     }
 }
 
-TextGrid::VectorF TextGrid::location() const { return m_location; }
+KsgTextGrid::VectorF KsgTextGrid::location() const { return m_location; }
 
-float TextGrid::width() const { return m_cell_width*float(m_width); }
+float KsgTextGrid::width() const { return m_cell_width*float(m_width); }
 
-float TextGrid::height() const { return m_cell_height*float(height_in_cells()); }
+float KsgTextGrid::height() const { return m_cell_height*float(height_in_cells()); }
 
-void TextGrid::set_size_in_characters(int width, int height) {
+void KsgTextGrid::set_size_in_characters(int width, int height) {
     m_width = width;
     m_cells.resize(std::size_t(width*height));
 }
 
-int TextGrid::width_in_cells() const { return m_width; }
+int KsgTextGrid::width_in_cells() const { return m_width; }
 
-int TextGrid::height_in_cells() const
+int KsgTextGrid::height_in_cells() const
     { return int(m_cells.size()) / m_width; }
 
-void TextGrid::set_cell
+void KsgTextGrid::set_cell
     (Cursor cursor, sf::Color fore, sf::Color back, UChar uchr)
 {
     verify_cursor_validity("TextGrid::set_cell", cursor);
@@ -85,38 +85,38 @@ void TextGrid::set_cell
                         cursor.line  *m_cell_height + m_location.y + m_cell_height*0.8f);
 }
 
-void TextGrid::set_cell_fore_color(Cursor cur, sf::Color color) {
+void KsgTextGrid::set_cell_fore_color(Cursor cur, sf::Color color) {
     verify_cursor_validity("TextGrid::set_cell_fore_color", cur);
     m_cells[cursor_to_cell(cur)].character.set_color(color);
 }
 
-void TextGrid::set_cell_back_color(Cursor cursor, sf::Color color) {
+void KsgTextGrid::set_cell_back_color(Cursor cursor, sf::Color color) {
     verify_cursor_validity("TextGrid::set_cell_back_color", cursor);
     m_cells[cursor_to_cell(cursor)].background.set_color(color);
 }
 
-void TextGrid::set_cell_colors(Cursor cursor, sf::Color fore, sf::Color back) {
+void KsgTextGrid::set_cell_colors(Cursor cursor, sf::Color fore, sf::Color back) {
     verify_cursor_validity("TextGrid::set_cell_colors", cursor);
     m_cells[cursor_to_cell(cursor)].background.set_color(back);
     m_cells[cursor_to_cell(cursor)].character .set_color(fore);
 }
 
-void TextGrid::set_cell_character(Cursor cursor, UChar identity) {
+void KsgTextGrid::set_cell_character(Cursor cursor, UChar identity) {
     verify_cursor_validity("TextGrid::set_cell_character", cursor);
     m_cells[cursor_to_cell(cursor)].identity = identity;
 }
 
-sf::Color TextGrid::cell_fore_color(Cursor cursor) const {
+sf::Color KsgTextGrid::cell_fore_color(Cursor cursor) const {
     verify_cursor_validity("TextGrid::cell_fore_color", cursor);
     return m_cells[cursor_to_cell(cursor)].character.color();
 }
 
-sf::Color TextGrid::cell_back_color(Cursor cursor) const {
+sf::Color KsgTextGrid::cell_back_color(Cursor cursor) const {
     verify_cursor_validity("TextGrid::cell_back_color", cursor);
     return m_cells[cursor_to_cell(cursor)].background.color();
 }
 
-void TextGrid::assign_font(const sf::Font & font, int font_size) {
+void KsgTextGrid::assign_font(const sf::Font & font, int font_size) {
     m_font = &font;
     m_char_size = font_size;
     m_cell_height = m_font->getLineSpacing(unsigned(font_size));
@@ -131,7 +131,7 @@ void TextGrid::assign_font(const sf::Font & font, int font_size) {
     }
 }
 
-void TextGrid::set_style(const StyleMap & styles) {
+void KsgTextGrid::set_style(const StyleMap & styles) {
     int font_size = DEFAULT_CHAR_SIZE;
     auto itr = styles.find(CHARACTER_SIZE);
     if (itr != styles.end()) {
@@ -145,10 +145,10 @@ void TextGrid::set_style(const StyleMap & styles) {
     }
 }
 
-Cursor TextGrid::end_cursor() const {
+Cursor KsgTextGrid::end_cursor() const {
     return Cursor(height_in_cells(), 0);
 }
-Cursor TextGrid::next_cursor(Cursor cur) const {
+Cursor KsgTextGrid::next_cursor(Cursor cur) const {
     if (++cur.column == width_in_cells()) {
         cur.column = 0;
         ++cur.line;
@@ -156,7 +156,7 @@ Cursor TextGrid::next_cursor(Cursor cur) const {
     return cur;
 }
 
-/* private */ void TextGrid::draw
+/* private */ void KsgTextGrid::draw
     (sf::RenderTarget & target, sf::RenderStates states) const
 {
     states.texture = &m_font->getTexture(unsigned(m_char_size));
@@ -166,12 +166,12 @@ Cursor TextGrid::next_cursor(Cursor cur) const {
     }
 }
 
-/* private */ std::size_t TextGrid::cursor_to_cell(Cursor cur) const {
+/* private */ std::size_t KsgTextGrid::cursor_to_cell(Cursor cur) const {
     assert(!(cur.column >= m_width) && !(cur.line >= height_in_cells()));
     return std::size_t(cur.column + cur.line*m_width);
 }
 
-/* private */ void TextGrid::verify_cursor_validity
+/* private */ void KsgTextGrid::verify_cursor_validity
     (const char * caller, Cursor cur) const
 {
     if (!(cur.column >= m_width) && !(cur.line >= height_in_cells()) &&

@@ -107,7 +107,9 @@ public:
     void add_keyword(const std::u32string &);
     void set_color_pair_option(decltype(DEFAULT_PAIR), ColorPair);
     void set_tab_width(int);
-    ColorPair get_pair_for_word(const std::u32string &) const;
+
+    // for type of token
+    ColorPair get_pair_for_token_type(int) const;
     ColorPair get_default_pair() const;
     int tab_width() const;
 

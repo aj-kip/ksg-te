@@ -29,7 +29,7 @@
 
 #pragma once
 
-class TextLines {
+class TextLines final : public RangesUpdater {
 public:
     static constexpr const UChar NEW_LINE = U'\n';
     using UStringCIter = std::u32string::const_iterator;
@@ -92,6 +92,7 @@ private:
     void for_each_line_in_range(Cursor beg, Cursor end, Func && func) const;
     void check_invarients() const;
     void verify_cursor_validity(const char * caller, Cursor) const;
+    void update_ranges_impl(CodeModeler &) override;
     std::vector<TextLine> m_lines;
     const RenderOptions * m_rendering_options;
     int m_width_constraint;

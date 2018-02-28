@@ -32,17 +32,17 @@
 
 #include <common/DrawRectangle.hpp>
 
-class TextGrid final : public ksg::Widget {
+class KsgTextGrid final : public ksg::Widget {
 public:
     struct TargetInterface final : public TargetTextGrid {
-        TargetInterface(TextGrid & parent): parent_grid(&parent) {}
+        TargetInterface(KsgTextGrid & parent): parent_grid(&parent) {}
         TargetInterface(const TargetInterface &) = default;
         ~TargetInterface() override;
         int width () const override { return parent_grid->width_in_cells(); }
         int height() const override { return parent_grid->height_in_cells(); }
         void set_cell(Cursor cursor, UChar uchr, ColorPair cpair) override
             { parent_grid->set_cell(cursor, cpair.fore, cpair.back, uchr); }
-        TextGrid * parent_grid;
+        KsgTextGrid * parent_grid;
     };
     using StyleMap = ksg::StyleMap;
 
@@ -51,9 +51,9 @@ public:
 
     static constexpr const int DEFAULT_CHAR_SIZE = 14;
 
-    TextGrid();
+    KsgTextGrid();
 
-    ~TextGrid() override;
+    ~KsgTextGrid() override;
 
     void process_event(const sf::Event &) override;
 

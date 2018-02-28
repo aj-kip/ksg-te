@@ -21,6 +21,7 @@
 
 #include "TextLine.hpp"
 #include "TextLines.hpp"
+#include "LuaCodeModeler.hpp"
 
 #include <limits>
 #include <cassert>
@@ -29,33 +30,74 @@ namespace {
 
 using UStringCIter = TextLines::UStringCIter;
 
-TextLine::IteratorPair progress_through_line
-    (TextLine::IteratorPair, UStringCIter end, const RenderOptions &,
-     int max_width, int working_width);
-
-bool is_newline(const TextLine::IteratorPair & ip)
-    { return ip.begin == ip.end; }
-
 bool is_whitespace(UChar uchr)
     { return uchr == U' ' || uchr == U'\n' || uchr == U'\t'; }
-
-bool is_operator(UChar uchr);
-
-bool is_neither_whitespace_or_operator(UChar uchr)
-    { return !is_whitespace(uchr) && !is_operator(uchr); }
 
 void run_text_line_tests();
 
 void verify_text_line_content_string(const char * caller, const std::u32string &);
 
+class DefaultCodeModeler final : public CodeModeler {
+    void reset_state() override {}
+    Response update_model(UStringCIter itr, Cursor) override {
+        bool is_ws = is_whitespace(*itr);
+        for (; *itr && is_ws == is_whitespace(*itr); ++itr) {}
+        auto tok_type = is_ws && (*itr == 0 || *itr == TextLines::NEW_LINE) ? LEADING_WHITESPACE : REGULAR_SEQUENCE;
+        return Response { itr, tok_type, is_ws };
+    }
+};
+
+// assumes certain optimizations are present, which for supported platforms
+// are ok
+static_assert(sizeof(DefaultCodeModeler) - sizeof(CodeModeler) == 0, "");
+
 } // end of <anonymous> namespace
 
-TextBreaker::~TextBreaker() {}
+RangesUpdater::RangesUpdater(const RangesUpdater & rhs):
+    RangesUpdater()
+{
+    if (rhs.m_observer != &rhs)
+        m_observer = rhs.m_observer;
+}
+
+RangesUpdater & RangesUpdater::operator = (const RangesUpdater & rhs) {
+    if (rhs.m_observer != &rhs)
+        m_observer = rhs.m_observer;
+    return *this;
+}
+
+RangesUpdater::~RangesUpdater() {}
+
+void RangesUpdater::update_ranges(CodeModeler & model) {
+    assert(m_observer);
+    m_observer->update_ranges_impl(model);
+}
+
+void RangesUpdater::update_ranges_skip_redirection(CodeModeler & model) {
+    update_ranges_impl(model);
+}
+
+void RangesUpdater::assign_ranges_updater(RangesUpdater & target) {
+    m_observer = &target;
+}
+
+void RangesUpdater::reset_ranges_updater_to_this() {
+    m_observer = this;
+}
+
+CodeModeler::~CodeModeler() {}
+
+/* static */ CodeModeler & CodeModeler::default_instance() {
+    static DefaultCodeModeler instance;
+    return instance;
+}
 
 TextLine::TextLine():
     m_grid_width(std::numeric_limits<int>::max()),
     m_extra_end_space(0),
-    m_rendering_options(&RenderOptions::get_default_instance())
+    m_rendering_options(&RenderOptions::get_default_instance()),
+    m_code_modeler(&CodeModeler::default_instance()),
+    m_line_number(NO_LINE_NUMBER)
 {
     check_invarients();
 }
@@ -64,9 +106,12 @@ TextLine::TextLine(const TextLine & rhs):
     m_grid_width(rhs.m_grid_width),
     m_extra_end_space(rhs.m_extra_end_space),
     m_content(rhs.m_content),
-    m_rendering_options(rhs.m_rendering_options)
+    m_rendering_options(rhs.m_rendering_options),
+    m_code_modeler(rhs.m_code_modeler),
+    m_line_number(rhs.m_line_number)
 {
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
 }
 
@@ -78,10 +123,13 @@ TextLine::TextLine(TextLine && rhs):
     m_grid_width(std::numeric_limits<int>::max()),
     m_extra_end_space(0),
     m_content(content_),
-    m_rendering_options(&RenderOptions::get_default_instance())
+    m_rendering_options(&RenderOptions::get_default_instance()),
+    m_code_modeler(&CodeModeler::default_instance()),
+    m_line_number(NO_LINE_NUMBER)
 {
     verify_text_line_content_string("TextLine::TextLine", content_);
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
 }
 
@@ -104,20 +152,35 @@ void TextLine::constrain_to_width(int target_width) {
                                     "Grid width must be a positive integer.");
     }
     m_grid_width = target_width;
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
 }
 
 void TextLine::set_content(const std::u32string & content_) {
     verify_text_line_content_string("TextLine::set_content", content_);
     m_content = content_;
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
 }
 
-void TextLine::assign_render_options(const RenderOptions & options) {
+void TextLine::assign_render_options
+    (const RenderOptions & options)
+{
     m_rendering_options = &options;
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
+    check_invarients();
+}
+
+void TextLine::set_line_number(int line_number) {
+    if (line_number != NO_LINE_NUMBER && line_number < 0) {
+        throw std::invalid_argument(
+            "TextLine::set_line_number: Code line number may only a "
+            "non-negative integer (with the exception of sentinel values).");
+    }
+    m_line_number = line_number;
     check_invarients();
 }
 
@@ -131,7 +194,8 @@ TextLine TextLine::split(int column) {
     new_line.assign_render_options(*m_rendering_options);
     m_content.erase(m_content.begin() + column, m_content.end());
     new_line.constrain_to_width(recorded_grid_width());
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
     return new_line;
 }
@@ -139,8 +203,10 @@ TextLine TextLine::split(int column) {
 int TextLine::push(int column, UChar uchr) {
     verify_column_number("TextLine::push", column);
     if (uchr == TextLines::NEW_LINE) return SPLIT_REQUESTED;
+    verify_text("TextLine::push", uchr);
     m_content.insert(m_content.begin() + column, 1, uchr);
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
     return column + 1;
 }
@@ -149,7 +215,8 @@ int TextLine::delete_ahead(int column) {
     verify_column_number("TextLine::delete_ahead", column);
     if (column == int(m_content.size())) return MERGE_REQUESTED;
     m_content.erase(m_content.begin() + column);
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
     return column;
 }
@@ -158,7 +225,8 @@ int TextLine::delete_behind(int column) {
     verify_column_number("TextLine::delete_behind", column);
     if (column == 0) return MERGE_REQUESTED;
     m_content.erase(m_content.begin() + column - 1);
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
     return column - 1;
 }
@@ -174,7 +242,8 @@ void TextLine::take_contents_of
                          other_line.content().end()                     );
     }
     other_line.wipe(0, other_line.content_length());
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
 }
 
@@ -182,7 +251,8 @@ int TextLine::wipe(int beg, int end) {
     verify_column_number("TextLine::wipe (for beg)", beg);
     verify_column_number("TextLine::wipe (for end)", end);
     m_content.erase(m_content.begin() + beg, m_content.begin() + end);
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
     return int(m_content.length());
 }
@@ -207,9 +277,11 @@ int TextLine::deposit_chatacters_to
     (const UChar * beg, const UChar * end, int pos)
 {
     verify_column_number("TextLine::deposit_chatacters_to", pos);
+    verify_text("TextLine::deposit_chatacters_to", beg, end);
     if (beg == end) return pos;
     m_content.insert(m_content.begin() + pos, beg, end);
-    update_ranges();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
     return pos + int(end - beg);
 }
@@ -217,12 +289,15 @@ int TextLine::deposit_chatacters_to
 void TextLine::swap(TextLine & other) {
     std::swap(m_grid_width, other.m_grid_width);
     std::swap(m_extra_end_space, other.m_extra_end_space);
-
     m_row_ranges.swap(other.m_row_ranges);
-
-    m_word_ranges.swap(other.m_word_ranges);
-    m_content.swap(other.m_content);
+    m_content   .swap(other.m_content   );
     std::swap(m_rendering_options, other.m_rendering_options);
+    std::swap(m_code_modeler, other.m_code_modeler);
+    std::swap(m_line_number, other.m_line_number);
+    m_tokens.swap(other.m_tokens);
+
+    check_invarients();
+    other.check_invarients();
 }
 
 int TextLine::recorded_grid_width() const { return m_grid_width; }
@@ -233,9 +308,7 @@ int TextLine::height_in_cells() const {
 
 const std::u32string & TextLine::content() const { return m_content; }
 
-void TextLine::render_to
-    (TargetTextGrid & target, int offset, int line_number) const
-{
+void TextLine::render_to(TargetTextGrid & target, int offset) const {
     if (m_grid_width != target.width()) {
         throw std::runtime_error(
             "TextLine::render_to: TextLine::constrain_to_width must be "
@@ -243,19 +316,19 @@ void TextLine::render_to
     }
 
     if (m_content.empty()) {
-        render_end_space(target, offset, line_number);
+        render_end_space(target, offset);
         return;
     }
 
-    using IterPairIter = IteratorPairCIterator;
+    using IterPairIter = decltype (m_tokens.begin());
     auto process_row_ =
-        [this, &target, &offset, &line_number]
+        [this, &target, &offset]
         (IterPairIter word_itr, UStringCIter end)
-    { return render_row(target, offset, word_itr, end, line_number); };
+    { return render_row(target, offset, word_itr, end); };
 
     const int original_offset_c = offset;
     auto row_begin = m_content.begin();
-    auto cur_word_range = m_word_ranges.begin();
+    auto cur_word_range = m_tokens.begin();
     for (auto row_end : m_row_ranges) {
         // do stuff with range
         cur_word_range = process_row_(cur_word_range, row_end);
@@ -264,8 +337,8 @@ void TextLine::render_to
     }
     cur_word_range = process_row_(cur_word_range, m_content.end());
     ++offset;
-    assert(cur_word_range == m_word_ranges.end());
-    render_end_space(target, original_offset_c, line_number);
+    assert(cur_word_range == m_tokens.end());
+    render_end_space(target, original_offset_c);
 }
 
 /* static */ void TextLine::run_tests() {
@@ -280,70 +353,116 @@ void TextLine::render_to
         (std::string(callername) + ": given column number is invalid.");
 }
 
-/* private */ void TextLine::update_ranges() {
-    m_word_ranges.clear();
+/* private */ void TextLine::verify_text
+    (const char * callername, UChar uchr) const
+{
+    if (uchr != TextLines::NEW_LINE && uchr != 0) return;
+    throw std::invalid_argument
+        (std::string(callername) + ": input characters for TextLine must not "
+         "be TextLines::NEW_LINE or the null terminator."                     );
+}
+
+/* private */ void TextLine::verify_text
+    (const char * callername, const UChar * beg, const UChar * end) const
+{
+    assert(end >= beg);
+    for (auto itr = beg; itr != end; ++itr)
+        verify_text(callername, *itr);
+}
+
+/* private */ void TextLine::update_ranges_impl(CodeModeler & modeler) {
+    m_tokens.clear();
     m_row_ranges.clear();
     if (m_content.empty()) return;
 
-    // this part is hard...
-    // I need actual iterators, since I'm recording them
-    IteratorPair ip(m_content.begin(), m_content.begin());
-    auto next_pair = [this](IteratorPair ip, int working_width) {
-        return progress_through_line(ip, m_content.end(), *m_rendering_options,
-                                     m_grid_width, working_width);
+    auto handle_hard_wraps = [this]
+        (const CodeModeler::Response & resp, UStringCIter itr, int working_width)
+    {
+        assert(resp.next - itr > working_width);
+        const auto grid_width_c = m_grid_width;
+        auto mid = itr + working_width;
+        while (true) {
+            m_tokens.emplace_back(resp.token_type, itr, mid);
+            m_row_ranges.push_back(mid);
+            itr = mid;
+            if (resp.next - mid > grid_width_c)
+                mid += grid_width_c;
+            else
+                break;
+        }
+        m_tokens.emplace_back(resp.token_type, mid, resp.next);
+        return m_grid_width - int(resp.next - mid);
     };
     int working_width = m_grid_width;
-    for (ip = next_pair(ip, working_width); ip.begin != m_content.end();
-         ip = next_pair(ip, working_width))
-    {
-        // one of these word ranges is invalid
-        assert(ip.begin >= m_content.begin() && ip.begin <  m_content.end());
-        assert(ip.end   >= m_content.begin() && ip.end   <= m_content.end());
-        if (is_newline(ip)) {
-            m_row_ranges.push_back(ip.begin);
-            working_width = m_grid_width;
-        } else {
-            // "words" here are not words (renaming necessary)
-            m_word_ranges.push_back(ip);
-            working_width -= (ip.end - ip.begin);
+    for (UStringCIter itr = m_content.begin(); itr != m_content.end();) {
+        assert(*itr);
+        assert(itr != m_content.end());
+        int col = int(itr - m_content.begin());
+        const auto resp = modeler.update_model(itr, Cursor(m_line_number, col));
+        const auto seq_len = resp.next - itr;
+        if (*resp.next == 0 && resp.next != m_content.end())
+            modeler.update_model(itr, Cursor(m_line_number, col));
+        assert(seq_len != 0);
+
+        // forced split
+        if (seq_len > m_grid_width) {
+            working_width = handle_hard_wraps(resp, itr, working_width);
         }
+        // split
+        else if (resp.always_hardwrap && seq_len > working_width) {
+            working_width = handle_hard_wraps(resp, itr, working_width);
+        }
+        // flow over
+        else if (!resp.always_hardwrap && seq_len > working_width) {
+            m_row_ranges.push_back(itr);
+            m_tokens.emplace_back(resp.token_type, itr, resp.next);
+            working_width = m_grid_width - int(seq_len);
+        }
+        // regular write
+        else {
+            m_tokens.emplace_back(resp.token_type, itr, resp.next);
+            working_width -= seq_len;
+        }
+        itr = resp.next;
     }
     m_extra_end_space = (working_width == 0) ? 1 : 0;
     check_invarients();
 }
 
-/* private */ TextLine::IteratorPairCIterator TextLine::render_row
-    (TargetTextGrid & target, int offset, IteratorPairCIterator word_itr,
-     UStringCIter row_end, int line_number) const
+/* private */ TextLine::TokenInfoCIter TextLine::render_row
+    (TargetTextGrid & target, int offset, TokenInfoCIter word_itr,
+     UStringCIter row_end) const
 {
     if (offset >= target.height()) {
-        return m_word_ranges.end();
+        return m_tokens.end();
     } else if (offset < 0) {
-        for (; word_itr != m_word_ranges.end(); ++word_itr) {
-            if (!word_itr->is_behind(row_end)) break;
+        for (; word_itr != m_tokens.end(); ++word_itr) {
+            if (!word_itr->pair.is_behind(row_end)) break;
         }
         return word_itr;
     }
     Cursor write_pos(offset, 0);
-    assert(word_itr >= m_word_ranges.begin() && word_itr < m_word_ranges.end());
-    for (; word_itr != m_word_ranges.end(); ++word_itr) {
-        if (!word_itr->is_behind(row_end)) break;
-        assert(word_itr->begin <= word_itr->end);
-        auto color_pair = m_rendering_options->get_pair_for_word
-            (std::u32string(word_itr->begin, word_itr->end));
-        for (auto itr = word_itr->begin; itr != word_itr->end; ++itr) {
+    //LuaHighlighter luahtr;
+    assert(word_itr >= m_tokens.begin() && word_itr < m_tokens.end());
+    for (; word_itr != m_tokens.end(); ++word_itr) {
+        if (!word_itr->pair.is_behind(row_end)) break;
+        assert(word_itr->pair.begin() <= word_itr->pair.end());
+        assert(word_itr->pair.begin() >= m_content.begin() &&
+               word_itr->pair.end() <= m_content.end());
+        auto color_pair = m_rendering_options->get_pair_for_token_type(word_itr->type);
+        for (const auto & chr : word_itr->pair) {
             assert(write_pos.column < m_grid_width);
-            assert(itr >= m_content.begin() && itr < m_content.end());
-            Cursor text_pos(line_number, int(itr - m_content.begin()));
+            Cursor text_pos(m_line_number, int(&chr - &m_content.front()));
             auto char_cpair = m_rendering_options->
                 color_adjust_for(text_pos)(color_pair);
-            target.set_cell(write_pos, *itr, char_cpair);
-            if (*itr == U'\t')
+            target.set_cell(write_pos, chr, char_cpair);
+            if (chr == U'\t')
                 write_pos.column += m_rendering_options->tab_width();
             else
                 ++write_pos.column;
         }
     }
+
     // fill rest of grid row
     fill_row_with_blanks(target, write_pos);
     return word_itr;
@@ -359,7 +478,7 @@ void TextLine::render_to
 }
 
 /* private */ void TextLine::render_end_space
-    (TargetTextGrid & target, int offset, int line_number) const
+    (TargetTextGrid & target, int offset) const
 {
     Cursor write_pos(offset + height_in_cells() - 1, 0);
     if (m_extra_end_space == 1) {
@@ -372,7 +491,7 @@ void TextLine::render_to
     if (write_pos.line >= target.height() || write_pos.line < 0) return;
     auto color_pair = m_rendering_options->get_default_pair();
     color_pair = m_rendering_options->color_adjust_for
-        (Cursor(line_number, content_length()))(color_pair);
+        (Cursor(m_line_number, content_length()))(color_pair);
     target.set_cell(write_pos, U' ', color_pair);
     ++write_pos.column;
     fill_row_with_blanks(target, write_pos);
@@ -380,21 +499,24 @@ void TextLine::render_to
 
 /* private */ void TextLine::check_invarients() const {
     assert(m_rendering_options);
+    assert(m_code_modeler);
     assert(m_extra_end_space == 0 || m_extra_end_space == 1);
     if (m_content.empty()) {
-        assert(m_row_ranges .empty());
-        assert(m_word_ranges.empty());
+        assert(m_row_ranges.empty());
+        assert(m_tokens    .empty());
         return;
+    } else {
+        assert(!m_tokens.empty());
     }
     if (!m_row_ranges.empty()) {
         auto last = m_row_ranges.front();
         auto itr  = m_row_ranges.begin() + 1;
-        auto word_itr = m_word_ranges.begin();
+        auto word_itr = m_tokens.begin();
         for (; itr != m_row_ranges.end(); ++itr) {
             assert(last < *itr);
             assert(*itr - last <= m_grid_width);
-            while (word_itr != m_word_ranges.end()) {
-                if (word_itr->is_behind(*itr)) {
+            while (word_itr != m_tokens.end()) {
+                if (word_itr->pair.is_behind(*itr)) {
                     ++word_itr;
                     continue;
                 } else {
@@ -406,15 +528,14 @@ void TextLine::render_to
         }
     }
     {
-    if (m_word_ranges.empty()) return;
-    auto last = m_word_ranges.front();
-    auto itr  = m_word_ranges.begin() + 1;
-    for (; itr != m_word_ranges.end(); ++itr) {
-        assert(last.is_behind(*itr));
-        auto ip = *itr;
-
-        assert(ip.begin >= m_content.begin() && ip.begin < m_content.end());
-        assert(ip.end >= m_content.begin() && ip.end <= m_content.end());
+    if (m_tokens.empty()) return;
+    auto last = m_tokens.front();
+    auto itr  = m_tokens.begin() + 1;
+    for (; itr != m_tokens.end(); ++itr) {
+        assert(last.pair.is_behind(itr->pair));
+        auto ip = itr->pair;
+        assert(ip.begin() >= m_content.begin() && ip.begin() < m_content.end());
+        assert(ip.end() >= m_content.begin() && ip.end() <= m_content.end());
         last = *itr;
     }
     }
@@ -422,58 +543,10 @@ void TextLine::render_to
 
 namespace {
 
-class DefaultBreaker final : public TextBreaker {
-public:
-    Response next_sequence(UStringCIter beg) override;
-};
-
-TextLine::IteratorPair progress_through_line
-    (TextLine::IteratorPair pos, std::u32string::const_iterator end,
-     const RenderOptions &, int max_width, int working_width)
-{
-    DefaultBreaker breaker;
-    // the process of interpreting the meaning of the rv is not trivial
-    using IteratorPair = TextLine::IteratorPair;
-    // we should never encounter NEW_LINE!
-    if (pos.begin == end || pos.end == end)
-        return IteratorPair(end, end);
-
-    auto resp = breaker.next_sequence(pos.end);
-    auto next = resp.next;
-    if (next == pos.end) return IteratorPair(end, end);
-
-    TextLine::IteratorPair rv(pos.end, next);
-    auto seq_length = rv.end - rv.begin;
-    if (seq_length > working_width && seq_length <= max_width) {
-        // whitespace is the exception, it does NOT wrap
-        if (resp.is_whitespace) {//if (classifier_func == is_whitespace_c) {
-            return IteratorPair(rv.begin, rv.begin + working_width);
-        } else {
-            // soft wrap, "ask" for a reset of working space
-            return IteratorPair(rv.begin, rv.begin);
-        }
-    } else if (seq_length > max_width) {
-        // hard wrap, full available width
-        return IteratorPair(rv.begin, rv.begin + working_width);
-    } else {
-        return rv;
-    }
-}
-
-bool is_operator(UChar uchr) {
-    switch (uchr) {
-    case U'`': case U'~': case U'!': case U'@': case U'$': case U'%':
-    case U'^': case U'*': case U'(': case U')': case U'-': case U'=':
-    case U'+':
-    case U'[': case U']': case U'\\': case U';': case U'/': case U',':
-    case U'.': case U'{': case U'}': case U'|': case U':': case U'"':
-    case U'<': case U'>': case U'?': return true;
-    default: return false;
-    }
-}
-
 void verify_text_line_content_string(const char * caller, const std::u32string & content) {
-    if (content.find(TextLines::NEW_LINE) != std::u32string::npos) {
+    if (content.find(TextLines::NEW_LINE) != std::u32string::npos ||
+        content.find(           UChar(0)) != std::u32string::npos   )
+    {
         throw std::invalid_argument
             (std::string(caller) + ": content string may not contain a new line.");
     }
@@ -529,7 +602,7 @@ void run_text_line_tests() {
     ntg.set_width (80);
     ntg.set_height(30);
     tline.constrain_to_width(ntg.width());
-    tline.render_to(ntg, 3, 0);
+    tline.render_to(ntg, 3);
     }
     {
     NullTextGrid ntg;
@@ -542,30 +615,9 @@ void run_text_line_tests() {
     for (int i = 0; i != (80 + 79); ++i) {
         pos = tline.push(pos, U'a');
     }
-    tline.render_to(ntg, 0, 0);
+    tline.set_line_number(0);
+    tline.render_to(ntg, 0);
     }
-}
-
-DefaultBreaker::Response DefaultBreaker::next_sequence(UStringCIter beg) {
-    bool (*classifier_func)(UChar) = nullptr;
-    auto check_and_set_classifier =
-        [&classifier_func] (UChar u, bool (*f)(UChar))
-    {
-        if (!f(u)) return;
-        assert(!classifier_func);
-        classifier_func = f;
-    };
-
-    check_and_set_classifier(*beg, is_whitespace                    );
-    check_and_set_classifier(*beg, is_operator                      );
-    check_and_set_classifier(*beg, is_neither_whitespace_or_operator);
-    assert(classifier_func);
-
-    while (*beg != 0 && classifier_func(*beg)) {
-        ++beg;
-    }
-    static constexpr bool (* const is_whitespace_c)(UChar) = is_whitespace;
-    return Response { beg, is_whitespace_c == classifier_func };
 }
 
 } // end of <anonymous> namespace

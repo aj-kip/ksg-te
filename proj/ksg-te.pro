@@ -22,8 +22,9 @@ release {
 }
 
 debug {
-    TARGET  = ksg-te-d
-    LIBS   += -lcommon-d -lksg-d
+    TARGET   = ksg-te-d
+    LIBS    += -lcommon-d -lksg-d
+    QMAKE_CXXFLAGS += -DMACRO_DEBUG
 }
 
 message($$CONFIG)
@@ -32,17 +33,20 @@ SOURCES += \
     ../src/main.cpp \
     ../src/TextLines.cpp \
     ../src/TextLine.cpp \
-    ../src/TextGrid.cpp \
     ../src/UserTextSelection.cpp \
-    ../src/TargetTextGrid.cpp
+    ../src/TargetTextGrid.cpp \
+    ../src/KsgTextGrid.cpp \
+    ../src/LuaCodeModeler.cpp
 
 HEADERS += \
     ../src/TextLines.hpp \
     ../src/TextLine.hpp \
-    ../src/TextGrid.hpp \
     ../src/UserTextSelection.hpp \
     ../src/Cursor.hpp \
-    ../src/TargetTextGrid.hpp
+    ../src/TargetTextGrid.hpp \
+    ../src/KsgTextGrid.hpp \
+    ../src/IteratorPair.hpp \
+    ../src/LuaCodeModeler.hpp
 
 INCLUDEPATH += \
     ../ksg/inc      \

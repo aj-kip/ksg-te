@@ -19,55 +19,65 @@
 
 *****************************************************************************/
 
-#include <vector>
-#include <string>
-#include <stdexcept>
+#include "Cursor.hpp"
+#include "TargetTextGrid.hpp"
+#include "IteratorPair.hpp"
 
 #include <common/MultiType.hpp>
 
-#include "Cursor.hpp"
-#include "TargetTextGrid.hpp"
+#include <vector>
+#include <string>
+#include <stdexcept>
+#include <memory>
 
 #pragma once
 
-template <typename IterT>
-class ConstIteratorPair {
-public:
-    using ValueType = decltype (*IterT());
-    using IteratorType = IterT;
-    ConstIteratorPair() {}
-    ConstIteratorPair(IteratorType beg_, IteratorType end_);
-    /** @warning Assumes that itr is from the same container as begin and end.
-     */
-    bool contains(IteratorType itr) const noexcept
-        { return begin <= itr && itr < end; }
-    bool is_behind(IteratorType itr) const noexcept
-        { return end <= itr; }
-    bool is_ahead(IteratorType itr) const noexcept
-        { return itr < begin; }
-    bool is_behind(const ConstIteratorPair & pair) const noexcept
-        { return end <= pair.begin; }
-    IteratorType begin, end;
-};
-
-struct TextBreaker {
+// multi line "objects" make this especially difficult...
+// namely C's multiline comments, Lua's multiline strings
+struct CodeModeler {
     using UStringCIter = std::u32string::const_iterator;
-    virtual ~TextBreaker();
+    using UStringIteratorPair = IteratorPair<UStringCIter>;
     struct Response {
         UStringCIter next;
-        bool is_whitespace;
+        int token_type;
+        bool always_hardwrap;
     };
-    virtual Response next_sequence(UStringCIter beg) = 0;
+    // token type's returned by the default instance
+    static constexpr const int REGULAR_SEQUENCE   = 0;
+    static constexpr const int LEADING_WHITESPACE = 1;
+    /** @note Puesdo-writable (and stateless) object */
+    static CodeModeler & default_instance();
+    virtual ~CodeModeler();
+    virtual void reset_state() = 0;
+    virtual Response update_model(UStringCIter, Cursor) = 0;
+};
+
+// subject
+class RangesUpdater {
+public:
+    RangesUpdater(): m_observer(this) {}
+    RangesUpdater(const RangesUpdater &);
+    RangesUpdater & operator = (const RangesUpdater &);
+    virtual ~RangesUpdater();
+    void update_ranges(CodeModeler & = CodeModeler::default_instance());
+    void update_ranges_skip_redirection(CodeModeler & = CodeModeler::default_instance());
+    void assign_ranges_updater(RangesUpdater &);
+    void reset_ranges_updater_to_this();
+protected:
+    virtual void update_ranges_impl(CodeModeler &) = 0;
+private:
+    RangesUpdater * m_observer;
 };
 
 // content string + extra ending space
-class TextLine {
+class TextLine final : public RangesUpdater {
 public:
     enum ContentTakingPlacement { PLACE_AT_BEGINING, PLACE_AT_END };
     static constexpr const int MERGE_REQUESTED = -1;
     static constexpr const int SPLIT_REQUESTED = -1;
+    static constexpr const int NO_LINE_NUMBER  = -1;
     using UStringCIter = std::u32string::const_iterator;
-    using IteratorPair = ConstIteratorPair<UStringCIter>;
+    using UStrIteratorPair = IteratorPair<UStringCIter>;
     TextLine();
     TextLine(const TextLine &);
     TextLine(TextLine &&);
@@ -76,7 +86,7 @@ public:
     TextLine & operator = (const TextLine &);
     TextLine & operator = (TextLine &&);
 
-    // ------------------------ whole content editing -------------------------
+    // -------------------------- TextLine Settings ---------------------------
 
     void constrain_to_width(int);
     void set_content(const std::u32string &);
@@ -84,7 +94,16 @@ public:
      *           reference. Given object must survive the life of this object.
      */
     void assign_render_options(const RenderOptions &);
+    void set_line_number(int);
+    /** @warning Does not in anyway maintain ownership over the given object
+     *           reference. Given object must survive the life of this object.
+     */
+    void assign_code_modeler(CodeModeler &);
+
     void assign_default_render_options();
+
+    // ------------------------ whole content editing -------------------------
+
     TextLine split(int column);
     void take_contents_of(TextLine &, decltype(PLACE_AT_BEGINING));
     int wipe(int beg, int end);
@@ -111,13 +130,25 @@ public:
     const std::u32string & content() const;
     int content_length() const { return int(content().length()); }
 
-    void render_to(TargetTextGrid &, int offset, int line_number = 0) const;
+    void render_to(TargetTextGrid &, int offset) const;
 
     static void run_tests();
 private:
-    using IteratorPairCIterator = std::vector<IteratorPair>::const_iterator;
+    using IteratorPairCIterator = std::vector<UStrIteratorPair>::const_iterator;
+    struct TokenInfo {
+        TokenInfo(): type(0) {}
+        TokenInfo(int type_, UStrIteratorPair pair_): type(type_), pair(pair_) {}
+        TokenInfo(int type_, UStringCIter beg, UStringCIter end):
+            type(type_), pair(beg, end)
+        {}
+        int type;
+        UStrIteratorPair pair;
+    };
+    using TokenInfoCIter = std::vector<TokenInfo>::const_iterator;
     void verify_column_number(const char * callername, int) const;
-    void update_ranges();
+    void verify_text(const char * callername, UChar) const;
+    void verify_text(const char * callername, const UChar *, const UChar *) const;
+    void update_ranges_impl(CodeModeler &) override;
     /**
      * @param target
      * @param offset row to render content to
@@ -126,11 +157,11 @@ private:
      * @param line_number
      * @return Word on next row to render OR end iterator
      */
-    IteratorPairCIterator render_row
-        (TargetTextGrid & target, int offset, IteratorPairCIterator word_itr,
-         UStringCIter row_end, int line_number) const;
+    TokenInfoCIter render_row
+        (TargetTextGrid & target, int offset, TokenInfoCIter word_itr,
+         UStringCIter row_end) const;
     void fill_row_with_blanks(TargetTextGrid &, Cursor write_pos) const;
-    void render_end_space(TargetTextGrid &, int offset, int line_number) const;
+    void render_end_space(TargetTextGrid &, int offset) const;
     void check_invarients() const;
 
     int m_grid_width;
@@ -141,17 +172,13 @@ private:
     // does not contain iterators begin and end in m_content
     std::vector<UStringCIter> m_row_ranges;
     // invarient -> cannot cross line range iterators
-    std::vector<IteratorPair> m_word_ranges;
+    //std::vector<UStrIteratorPair> m_word_ranges;
+
     std::u32string m_content;
     const RenderOptions * m_rendering_options;
-};
 
-template <typename IterT>
-ConstIteratorPair<IterT>::ConstIteratorPair
-    (IteratorType beg_, IteratorType end_):
-    begin(beg_), end(end_)
-{
-    if (beg_ <= end_) return;
-    throw std::invalid_argument("ConstIteratorPair::ConstIteratorPair: beg "
-                                "must be equal to or less than end.");
-}
+    CodeModeler * m_code_modeler;
+    int m_line_number;
+
+    std::vector<TokenInfo> m_tokens;
+};

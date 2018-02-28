@@ -20,6 +20,7 @@
 *****************************************************************************/
 
 #include "TargetTextGrid.hpp"
+#include "LuaCodeModeler.hpp"
 
 #include <stdexcept>
 
@@ -82,13 +83,9 @@ void RenderOptions::set_tab_width(int new_width) {
     }
     m_tab_width = new_width;
 }
-ColorPair RenderOptions::get_pair_for_word
-    (const std::u32string & word) const
-{
-    if (m_keywords.find(word) == m_keywords.end())
-        return get_default_pair();
-    else
-        return ColorPair(m_keyword_color, m_back_color);
+
+ColorPair RenderOptions::get_pair_for_token_type(int tid) const {
+    return LuaCodeModeler::colors_for_pair(tid);
 }
 
 ColorPair RenderOptions::get_default_pair() const {

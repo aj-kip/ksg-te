@@ -20,6 +20,7 @@
 *****************************************************************************/
 
 #include "TextLines.hpp"
+#include "LuaCodeModeler.hpp"
 
 #include <limits>
 #include <stdexcept>
@@ -64,6 +65,8 @@ void TextLines::set_content(const std::u32string & content_string) {
         auto beg = index_to_iterator(index);
         auto end = index_to_iterator(next );
         m_lines.emplace_back(std::u32string(beg, end));
+        m_lines.back().assign_ranges_updater(*this);
+        m_lines.back().set_line_number(int(m_lines.size() - 1));
         if (end == content_string.end()) break;
         assert(next + 1 < content_string.size());
         index = next + 1;
@@ -82,36 +85,41 @@ void TextLines::assign_default_render_options() {
 }
 
 Cursor TextLines::push(Cursor cursor, UChar uchar) {
-    auto try_it = [this]() {
-        if (m_width_constraint == std::numeric_limits<decltype (m_width_constraint)>::max()) {
-            return;
-        }
-        NullTextGrid ntg;
-        ntg.set_width(m_width_constraint);
-        ntg.set_height(30);
-        render_to(ntg, 0);
-    };
     verify_cursor_validity("TextLines::push", cursor);
     if (cursor == end_cursor()) {
         m_lines.emplace_back();
         // need to tell the new line a few things
-        m_lines.back().constrain_to_width(m_width_constraint);
-        m_lines.back().assign_render_options(*m_rendering_options);
+        auto & new_line = m_lines.back();
+        new_line.constrain_to_width(m_width_constraint);
+        new_line.assign_render_options(*m_rendering_options);
+        new_line.assign_ranges_updater(*this);
+        new_line.set_line_number(int(m_lines.size()) - 1);
     }
     auto & line = m_lines[std::size_t(cursor.line)];
     auto resp = line.push(cursor.column, uchar);
     if (resp == TextLine::SPLIT_REQUESTED) {
         // if split is requested, the line has not been modified
         auto spl = line.split(cursor.column);
-        try_it();
+        spl.assign_ranges_updater(*this);
+        spl.assign_render_options(*m_rendering_options);
+        spl.constrain_to_width(m_width_constraint);
+
         m_lines.insert(m_lines.begin() + cursor.line + 1, spl);
-        try_it();
+        {
+        int line_num = 0;
+        for (auto & line : m_lines)
+            line.set_line_number(line_num++);
+        }
         ++cursor.line;
         cursor.column = 0;
+        LuaCodeModeler lcm;
+        update_ranges_impl(lcm);
+        check_invarients();
         return cursor;
     }
     // we know resp is a new column position now
     auto new_col = resp;
+    check_invarients();
     return Cursor(cursor.line, new_col);
 }
 
@@ -130,6 +138,13 @@ Cursor TextLines::delete_ahead(Cursor cursor) {
         // note: line, next_line become danglers after this statement
         //       so it's important that we do not access them again
         m_lines.erase(m_lines.begin() + cursor.line + 1);
+        if (cursor.line >= int(m_lines.size())) {
+            int line_num = cursor.line;
+            auto itr = m_lines.begin() + line_num;
+            for (; itr != m_lines.end(); ++itr)
+                itr->set_line_number(line_num++);
+        }
+        check_invarients();
         return Cursor(cursor.line, old_line_size);
     } else {
         auto new_col = resp;
@@ -155,6 +170,7 @@ Cursor TextLines::delete_behind(Cursor cursor) {
         auto line_size = line.content_length();
         // invalidates: prev_line, line
         m_lines.erase(m_lines.begin() + cursor.line);
+        check_invarients();
         return Cursor(cursor.line - 1, line_size);
     }
     return Cursor(cursor.line, cursor.column - 1);
@@ -181,6 +197,12 @@ Cursor TextLines::wipe(Cursor beg, Cursor end) {
         ++end.line;
     assert(beg.line + 1 <= end.line);
     m_lines.erase(m_lines.begin() + beg.line + 1, m_lines.begin() + end.line);
+    {
+    int line_num = 0;
+    for (auto & line : m_lines)
+        line.set_line_number(line_num++);
+    }
+    check_invarients();
     return beg;
 }
 
@@ -269,9 +291,8 @@ bool TextLines::is_valid_cursor(Cursor cursor) const noexcept {
 }
 
 void TextLines::render_to(TargetTextGrid & target, int offset) const {
-    int line_number = 0;
     for (const auto & line : m_lines) {
-        line.render_to(target, offset, line_number++);
+        line.render_to(target, offset);
         offset += line.height_in_cells();
     }
     if (offset > target.height()) return;
@@ -305,6 +326,7 @@ template <typename Func>
 }
 
 /* private */ void TextLines::check_invarients() const {
+    ;
 }
 
 /* private */ void TextLines::verify_cursor_validity
@@ -313,6 +335,12 @@ template <typename Func>
     if (is_valid_cursor(cursor)) return;
     throw std::invalid_argument
         (std::string(caller) + ": given cursor is invalid.");
+}
+
+/* private */ void TextLines::update_ranges_impl(CodeModeler & modeler) {
+    // important to skip redirection, otherwise infinite recursion!
+    for (auto & line : m_lines)
+        line.update_ranges_skip_redirection(modeler);
 }
 
 namespace {
