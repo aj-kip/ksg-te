@@ -112,7 +112,7 @@ int main() {
     }
     EditorDialog editor;
     TextTyperBot bot;
-    //(void)bot.set_content(load_ascii_textfile("vector.lua")).set_type_rate(0.0075);
+    (void)bot.set_content(load_ascii_textfile("vector.lua")).set_type_rate(0.0075);
 
     sf::Font font;
     if (!font.loadFromFile("SourceCodePro-Regular.ttf")) {
@@ -163,11 +163,10 @@ void EditorDialog::setup_dialog(const sf::Font & font) {
         m_render_options.add_keyword(keyword);
     m_lines.constrain_to_width(m_grid.width_in_cells());
     m_lines.assign_render_options(m_render_options);
+    //m_lines.set_content(U"'l'l\nd");
 
     m_grid.assign_font(font);
     m_render_options.set_text_selection(m_user_selection);
-
-
 
     add_widget(&m_grid);
     m_interface.reset(new KsgTextGrid::TargetInterface(m_grid));
@@ -198,7 +197,11 @@ void EditorDialog::do_update(float et, TextTyperBot & bot) {
     m_delay += et;
 
     {
-    TextLine tline(expand_char_width(std::to_string(et)));
+    static float min = std::numeric_limits<float>::min();
+    static float max = std::numeric_limits<float>::max();
+    min = std::max(min, et);
+    max = std::min(max, et);
+    TextLine tline(expand_char_width(std::to_string(min) + " " + std::to_string(max)));
     tline.constrain_to_width(m_elapsed_time_grid.width());
     tline.render_to(m_elapsed_time_grid, 0);
     }
@@ -315,6 +318,7 @@ std::u32string load_ascii_textfile(const char * filename) {
     fin.seekg(fin.end);
     auto fend = fin.tellg();
     auto length = fend - fbeg;
+    fin.seekg(fin.beg);
     std::u32string content;
     content.reserve(std::size_t(length));
     while (fin) {

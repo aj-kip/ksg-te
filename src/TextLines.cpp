@@ -53,24 +53,27 @@ void TextLines::constrain_to_width(int target_width) {
 }
 
 void TextLines::set_content(const std::u32string & content_string) {
-    std::size_t index = 0;
     auto index_to_iterator = [&content_string](std::size_t index) {
         if (index == std::u32string::npos)
             return content_string.end();
         else
             return content_string.begin() + int(index);
     };
+    std::size_t index = 0;
     while (true) {
         auto next = content_string.find(NEW_LINE, index);
         auto beg = index_to_iterator(index);
         auto end = index_to_iterator(next );
+        // design issue, parent TextLines, on reallocation, we're jumping back
+        // to parent while the vector is being modified
         m_lines.emplace_back(std::u32string(beg, end));
-        m_lines.back().assign_ranges_updater(*this);
-        m_lines.back().set_line_number(int(m_lines.size() - 1));
         if (end == content_string.end()) break;
         assert(next + 1 < content_string.size());
         index = next + 1;
     }
+    refresh_lines_information();
+    LuaCodeModeler lcm;
+    update_ranges(lcm);
     check_invarients();
 }
 
@@ -88,28 +91,15 @@ Cursor TextLines::push(Cursor cursor, UChar uchar) {
     verify_cursor_validity("TextLines::push", cursor);
     if (cursor == end_cursor()) {
         m_lines.emplace_back();
-        // need to tell the new line a few things
-        auto & new_line = m_lines.back();
-        new_line.constrain_to_width(m_width_constraint);
-        new_line.assign_render_options(*m_rendering_options);
-        new_line.assign_ranges_updater(*this);
-        new_line.set_line_number(int(m_lines.size()) - 1);
+        refresh_lines_information();
     }
     auto & line = m_lines[std::size_t(cursor.line)];
     auto resp = line.push(cursor.column, uchar);
     if (resp == TextLine::SPLIT_REQUESTED) {
         // if split is requested, the line has not been modified
         auto spl = line.split(cursor.column);
-        spl.assign_ranges_updater(*this);
-        spl.assign_render_options(*m_rendering_options);
-        spl.constrain_to_width(m_width_constraint);
-
         m_lines.insert(m_lines.begin() + cursor.line + 1, spl);
-        {
-        int line_num = 0;
-        for (auto & line : m_lines)
-            line.set_line_number(line_num++);
-        }
+        refresh_lines_information();
         ++cursor.line;
         cursor.column = 0;
         LuaCodeModeler lcm;
@@ -138,12 +128,7 @@ Cursor TextLines::delete_ahead(Cursor cursor) {
         // note: line, next_line become danglers after this statement
         //       so it's important that we do not access them again
         m_lines.erase(m_lines.begin() + cursor.line + 1);
-        if (cursor.line >= int(m_lines.size())) {
-            int line_num = cursor.line;
-            auto itr = m_lines.begin() + line_num;
-            for (; itr != m_lines.end(); ++itr)
-                itr->set_line_number(line_num++);
-        }
+        refresh_lines_information();
         check_invarients();
         return Cursor(cursor.line, old_line_size);
     } else {
@@ -170,6 +155,7 @@ Cursor TextLines::delete_behind(Cursor cursor) {
         auto line_size = line.content_length();
         // invalidates: prev_line, line
         m_lines.erase(m_lines.begin() + cursor.line);
+        refresh_lines_information();
         check_invarients();
         return Cursor(cursor.line - 1, line_size);
     }
@@ -197,11 +183,7 @@ Cursor TextLines::wipe(Cursor beg, Cursor end) {
         ++end.line;
     assert(beg.line + 1 <= end.line);
     m_lines.erase(m_lines.begin() + beg.line + 1, m_lines.begin() + end.line);
-    {
-    int line_num = 0;
-    for (auto & line : m_lines)
-        line.set_line_number(line_num++);
-    }
+    refresh_lines_information();
     check_invarients();
     return beg;
 }
@@ -341,6 +323,16 @@ template <typename Func>
     // important to skip redirection, otherwise infinite recursion!
     for (auto & line : m_lines)
         line.update_ranges_skip_redirection(modeler);
+}
+
+/* private */ void TextLines::refresh_lines_information() {
+    int line_num = 0;
+    for (auto & line : m_lines) {
+        line.set_line_number(line_num++);
+        line.assign_render_options(*m_rendering_options);
+        line.assign_ranges_updater(*this);
+        line.constrain_to_width(m_width_constraint);
+    }
 }
 
 namespace {

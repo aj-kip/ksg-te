@@ -31,9 +31,17 @@
 struct ColorPair {
     ColorPair(){}
     ColorPair(sf::Color fore_, sf::Color back_): fore(fore_), back(back_) {}
+    bool operator == (const ColorPair &) const;
+    bool operator != (const ColorPair &) const;
     sf::Color fore;
     sf::Color back;
 };
+
+inline bool ColorPair::operator == (const ColorPair & rhs) const
+    { return fore == rhs.fore && back == rhs.fore; }
+
+inline bool ColorPair::operator != (const ColorPair & rhs) const
+    { return fore != rhs.fore || back != rhs.back; }
 
 template <sf::Color(*transform)(sf::Color)>
 inline ColorPair apply_to

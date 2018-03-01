@@ -33,12 +33,17 @@ using UStringCIter = LuaCodeModeler::UStringCIter;
 using CharTestFunc = bool (*)(UChar);
 
 const std::set<std::u32string> & get_lua_keywords();
+
 const std::set<std::u32string> & get_lua_constants();
 
 constexpr const int NOT_MULTILINE = -1;
+
 int get_mutliline_size(UStringCIter);
+
 int get_multiline_end_size(UStringCIter);
+
 UStringCIter get_end_of_numeric(UStringCIter);
+
 // doesn't if ends with new_line or null
 bool string_terminates(UStringCIter);
 
@@ -46,15 +51,18 @@ template <CharTestFunc test_func>
 LuaCodeModeler::Response handle_regular_sequence(UStringCIter);
 
 bool is_alphanum(UChar);
+
 bool is_whitespace(UChar);
+
+void run_lua_code_modeler_tests();
 
 } // end of <anonymous> namespace
 
 LuaCodeModeler::LuaCodeModeler():
-    m_in_comment  (false),
-    m_current_string_quote   (NOT_IN_STRING),
-    m_string_terminates(false),
-    m_in_multiline_size(NOT_MULTILINE)
+    m_in_comment          (false        ),
+    m_current_string_quote(NOT_IN_STRING),
+    m_string_terminates   (false        ),
+    m_in_multiline_size   (NOT_MULTILINE)
 {}
 
 void LuaCodeModeler::reset_state() {
@@ -66,6 +74,11 @@ void LuaCodeModeler::reset_state() {
 LuaCodeModeler::Response LuaCodeModeler::update_model
     (UStringCIter itr, Cursor)
 {
+    if (*itr == 0) {
+        throw std::invalid_argument
+            ("LuaCodeModeler::update_model: cannot progress beyond the null "
+             "terminator.");
+    }
     if (m_in_multiline_size != NOT_MULTILINE)
         return handle_multiline(itr);
     if (m_in_comment)
@@ -75,7 +88,8 @@ LuaCodeModeler::Response LuaCodeModeler::update_model
     // default mode
     // gets complicated here
     switch (*itr) {
-    case 0: return make_resp(itr, 0, false);
+    case TextLines::NEW_LINE: return handle_newline(itr);
+
     // arithmetic operators
     case U'+': case U'*': case U'/': case U'%': case U'^':
         return make_resp(itr + 1, OPERATOR, false);
@@ -164,6 +178,9 @@ LuaCodeModeler::Response LuaCodeModeler::update_model
     }
 }
 
+/* static */ void LuaCodeModeler::run_tests()
+    { run_lua_code_modeler_tests(); }
+
 /* private */ LuaCodeModeler::Response LuaCodeModeler::handle_multiline
     (UStringCIter itr)
 {
@@ -186,10 +203,8 @@ LuaCodeModeler::Response LuaCodeModeler::update_model
     (UStringCIter itr)
 {
     // done all the way to the end of the line
-    m_in_comment = *itr != 0 && *itr != TextLines::NEW_LINE;
-    if (!m_in_comment) {
-        return make_resp(itr + 1, COMMENT, false);
-    }
+    if (*itr == TextLines::NEW_LINE) return handle_newline(itr);
+
     // reminder: CodeModeler's default instance is stateless!
     auto rv_resp = CodeModeler::default_instance().update_model(itr, Cursor());
 
@@ -207,9 +222,19 @@ LuaCodeModeler::Response LuaCodeModeler::update_model
         return make_resp(itr + 1, rv_type, false);
     } else if (*itr == U'\\' && *(itr + 1) == m_current_string_quote) {
         return make_resp(itr + 2, rv_type, false);
+    } else if (*itr == TextLines::NEW_LINE) {
+        return handle_newline(itr);
     }
     // if not, we'll apply the hard, fast, and sloppy rules
     auto rv = CodeModeler::default_instance().update_model(itr, Cursor());
+    // but we need to keep an eye out for the end string character
+    for (auto jtr = itr; jtr != rv.next; ++jtr) {
+        if (*jtr == m_current_string_quote) {
+            m_current_string_quote = NOT_IN_STRING;
+            rv.next = jtr + 1;
+            break;
+        }
+    }
     rv.token_type = rv_type;
     return make_resp(rv);
 }
@@ -231,6 +256,14 @@ LuaCodeModeler::Response LuaCodeModeler::update_model
     // nothing to check...
 }
 
+/* private */ LuaCodeModeler::Response LuaCodeModeler::handle_newline
+    (UStringCIter itr)
+{
+    assert(*itr == TextLines::NEW_LINE);
+    m_in_comment = false;
+    m_current_string_quote = NOT_IN_STRING;
+    return make_resp(itr + 1, REGULAR_CODE, false);
+}
 
 namespace {
 
@@ -279,17 +312,31 @@ bool string_terminates(UStringCIter itr) {
 template <CharTestFunc test_func>
 LuaCodeModeler::Response handle_regular_sequence(UStringCIter itr) {
     assert(test_func(*itr));
-    while (*itr != 0 && test_func(*itr)) ++itr;
+    while (*itr != 0 && *itr != TextLines::NEW_LINE && test_func(*itr)) ++itr;
+    auto rv_type = LuaCodeModeler::REGULAR_CODE;
+    if (test_func == is_whitespace &&
+            (*itr == 0 || *itr == TextLines::NEW_LINE))
+    {
+        rv_type = LuaCodeModeler::LEADING_WHITESPACE;
+    }
     return LuaCodeModeler::Response
-        { itr, LuaCodeModeler::REGULAR_CODE, (test_func == is_whitespace) };
+        { itr, rv_type, (test_func == is_whitespace) };
 }
 
 bool is_alphanum(UChar uchr) {
-    return !is_operator(uchr) && !is_whitespace(uchr);
+    return !is_operator(uchr) && !is_whitespace(uchr) &&
+           uchr != U'"' && uchr != U'\'';
 }
 
 bool is_whitespace(UChar uchr) {
     return uchr == U' ' || uchr == U'\t' || uchr == U'\r' || uchr == U'\n';
+}
+
+void run_lua_code_modeler_tests() {
+    {
+    std::u32string code = U"";
+    LuaCodeModeler lcm;
+    }
 }
 
 const std::set<std::u32string> & get_lua_keywords() {
@@ -303,9 +350,7 @@ const std::set<std::u32string> & get_lua_keywords() {
 }
 
 const std::set<std::u32string> & get_lua_constants() {
-    static std::set<std::u32string> constants({
-        U"false", U"nil" , U"true"
-    });
+    static std::set<std::u32string> constants({ U"false", U"nil" , U"true" });
     return constants;
 }
 

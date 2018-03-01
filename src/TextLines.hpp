@@ -93,6 +93,16 @@ private:
     void check_invarients() const;
     void verify_cursor_validity(const char * caller, Cursor) const;
     void update_ranges_impl(CodeModeler &) override;
+    // A should be called after every modification of the m_lines vector
+    //
+
+    class LinesCollection {
+    public:
+        TextLine & push_new_line();
+        const std::vector<TextLine> & text_lines();
+    };
+
+    void refresh_lines_information();
     std::vector<TextLine> m_lines;
     const RenderOptions * m_rendering_options;
     int m_width_constraint;

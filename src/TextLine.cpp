@@ -103,6 +103,7 @@ TextLine::TextLine():
 }
 
 TextLine::TextLine(const TextLine & rhs):
+    RangesUpdater(),
     m_grid_width(rhs.m_grid_width),
     m_extra_end_space(rhs.m_extra_end_space),
     m_content(rhs.m_content),
@@ -400,8 +401,6 @@ void TextLine::render_to(TargetTextGrid & target, int offset) const {
         int col = int(itr - m_content.begin());
         const auto resp = modeler.update_model(itr, Cursor(m_line_number, col));
         const auto seq_len = resp.next - itr;
-        if (*resp.next == 0 && resp.next != m_content.end())
-            modeler.update_model(itr, Cursor(m_line_number, col));
         assert(seq_len != 0);
 
         // forced split
@@ -425,6 +424,9 @@ void TextLine::render_to(TargetTextGrid & target, int offset) const {
         }
         itr = resp.next;
     }
+    static const std::u32string NEW_LINE = U"\n";
+    modeler.update_model(NEW_LINE.begin(),
+                         Cursor(m_line_number, int(m_content.size())));
     m_extra_end_space = (working_width == 0) ? 1 : 0;
     check_invarients();
 }

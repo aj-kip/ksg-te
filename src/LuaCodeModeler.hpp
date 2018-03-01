@@ -40,6 +40,7 @@ public:
     void reset_state() override;
     Response update_model(UStringCIter, Cursor) override;
     static ColorPair colors_for_pair(int);
+    static void run_tests();
 private:
     static constexpr const int NOT_IN_STRING = 0;
     Response handle_multiline(UStringCIter);
@@ -57,6 +58,7 @@ private:
         check_invarients();
         return passme;
     }
+    Response handle_newline(UStringCIter);
     bool m_in_comment;
     UChar m_current_string_quote;
     bool m_string_terminates;
