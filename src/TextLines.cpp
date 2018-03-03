@@ -20,7 +20,6 @@
 *****************************************************************************/
 
 #include "TextLines.hpp"
-#include "LuaCodeModeler.hpp"
 
 #include <limits>
 #include <stdexcept>
@@ -41,7 +40,8 @@ TextLines::TextLines():
 {}
 
 /* explicit */ TextLines::TextLines(const std::u32string & content_):
-    m_rendering_options(&RenderOptions::get_default_instance())
+    m_rendering_options(&RenderOptions::get_default_instance()),
+    m_width_constraint(std::numeric_limits<int>::max())
 { set_content(content_); }
 
 
@@ -72,8 +72,6 @@ void TextLines::set_content(const std::u32string & content_string) {
         index = next + 1;
     }
     refresh_lines_information();
-    LuaCodeModeler lcm;
-    update_ranges(lcm);
     check_invarients();
 }
 
@@ -86,6 +84,12 @@ void TextLines::assign_render_options(const RenderOptions & options) {
 void TextLines::assign_default_render_options() {
     assign_render_options(RenderOptions::get_default_instance());
 }
+
+void TextLines::update_modeler(CodeModeler & modeler) {
+    for (auto & line : m_lines)
+        line.update_modeler(modeler);
+}
+
 
 Cursor TextLines::push(Cursor cursor, UChar uchar) {
     verify_cursor_validity("TextLines::push", cursor);
@@ -102,8 +106,6 @@ Cursor TextLines::push(Cursor cursor, UChar uchar) {
         refresh_lines_information();
         ++cursor.line;
         cursor.column = 0;
-        LuaCodeModeler lcm;
-        update_ranges_impl(lcm);
         check_invarients();
         return cursor;
     }
@@ -319,18 +321,11 @@ template <typename Func>
         (std::string(caller) + ": given cursor is invalid.");
 }
 
-/* private */ void TextLines::update_ranges_impl(CodeModeler & modeler) {
-    // important to skip redirection, otherwise infinite recursion!
-    for (auto & line : m_lines)
-        line.update_ranges_skip_redirection(modeler);
-}
-
 /* private */ void TextLines::refresh_lines_information() {
     int line_num = 0;
     for (auto & line : m_lines) {
         line.set_line_number(line_num++);
         line.assign_render_options(*m_rendering_options);
-        line.assign_ranges_updater(*this);
         line.constrain_to_width(m_width_constraint);
     }
 }
@@ -458,6 +453,7 @@ void do_text_lines_unit_tests() {
         uts.move_left(tlines);
     // don't break invarients!
     uts.push(&tlines, TextLines::NEW_LINE);
+    tlines.update_modeler(CodeModeler::default_instance());
     tlines.render_to(ntg, 0);
     }
     {

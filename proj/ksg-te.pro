@@ -36,7 +36,8 @@ SOURCES += \
     ../src/UserTextSelection.cpp \
     ../src/TargetTextGrid.cpp \
     ../src/KsgTextGrid.cpp \
-    ../src/LuaCodeModeler.cpp
+    ../src/LuaCodeModeler.cpp \
+    ../src/TextLineImage.cpp
 
 HEADERS += \
     ../src/TextLines.hpp \
@@ -46,7 +47,8 @@ HEADERS += \
     ../src/TargetTextGrid.hpp \
     ../src/KsgTextGrid.hpp \
     ../src/IteratorPair.hpp \
-    ../src/LuaCodeModeler.hpp
+    ../src/LuaCodeModeler.hpp \
+    ../src/TextLineImage.hpp
 
 INCLUDEPATH += \
     ../ksg/inc      \

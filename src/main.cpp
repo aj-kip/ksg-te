@@ -33,8 +33,10 @@
 
 #include "TextLine.hpp"
 #include "TextLines.hpp"
+#include "TextLineImage.hpp"
 #include "KsgTextGrid.hpp"
 #include "UserTextSelection.hpp"
+#include "LuaCodeModeler.hpp"
 
 constexpr const auto * const SAMPLE_CODE =
     U"function do_something(a, b)\n"
@@ -101,9 +103,10 @@ private:
 };
 
 int main() {
-#   if 0//ndef NDEBUG
-    TextLine::run_tests();
-    TextLines::run_tests();
+#   ifndef NDEBUG
+    TextLineImage    ::run_tests();
+    TextLine         ::run_tests();
+    TextLines        ::run_tests();
     UserTextSelection::run_tests();
 #   endif
     {
@@ -203,6 +206,7 @@ void EditorDialog::do_update(float et, TextTyperBot & bot) {
     max = std::min(max, et);
     TextLine tline(expand_char_width(std::to_string(min) + " " + std::to_string(max)));
     tline.constrain_to_width(m_elapsed_time_grid.width());
+    tline.update_modeler(CodeModeler::default_instance());
     tline.render_to(m_elapsed_time_grid, 0);
     }
 
@@ -213,6 +217,8 @@ void EditorDialog::do_update(float et, TextTyperBot & bot) {
     }
     //if (requires_rerender) {
         m_render_options.set_text_selection(m_user_selection);
+        LuaCodeModeler lcm;
+        m_lines.update_modeler(lcm);
         m_lines.render_to(m_doc, bottom_offset(m_lines,  m_doc));
     //}
 }
